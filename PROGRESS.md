@@ -79,6 +79,7 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 | M1.40 | Raw evidence hash lookup | Done | Raw evidence can be fetched by SHA256 as well as raw_ref |
 | M1.41 | Related file event lookup | Done | Related-events API can pivot on file_path for file evidence investigation |
 | M1.42 | Agent status filter | Done | Agent listing supports online/offline status filters for endpoint health queues |
+| M1.43 | UI endpoint operations and agent downloads | Done | UI shows reporting endpoint OS/host/IP/last_seen, queues read-only jobs, and downloads agent binary/config with enrollment token |
 
 ## Work log
 
@@ -121,6 +122,7 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 - 2026-06-10: Added Fidelis parity query/context APIs: event count, related events, behavior context, and network context. Tests, Windows cross-build, and smoke pass.
 - 2026-06-10: Added saved hunt workflow for threat hunting: create/list hunts, execute against events/alerts, and persist hunt run results. Tests, Windows cross-build, and smoke pass.
 - 2026-06-10: Added agent status filtering to the admin agent list for online/offline operational queues. Tests, Windows cross-build, and smoke pass.
+- 2026-06-10: Added UI endpoint operations: endpoint reporting table, reverse-proxy-friendly job queue form, Windows agent binary download, and generated install config download containing server URL/enrollment token. Tests, Windows cross-build, and smoke pass.
 - 2026-06-10: Added server-side read-only task argument validation so unsafe/malformed task requests are rejected before endpoints claim them. Tests, Windows cross-build, and smoke pass.
 - 2026-06-10: Added saved hunt lifecycle controls: patch/update hunts, filter enabled hunts, and block disabled hunt execution. Tests, Windows cross-build, and smoke pass.
 - 2026-06-10: Added task timeout maintenance so claimed tasks that exceed their timeout can be marked `timed_out` server-side. Tests, Windows cross-build, and smoke pass.
