@@ -37,6 +37,7 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 | M0.7 | Local integration smoke test | Done | `scripts/m0_smoke.sh` validates backend + Go agent E2E |
 | M1.0 | Agent config/policy update | Done | Tenant config API, heartbeat config response, Go agent runtime config apply |
 | M1.1 | Raw evidence/schema hardening | Done | Normalized events/alerts include raw_ref/raw_hash; SQLite raw_evidence store/API added |
+| M1.2 | Detection rule loader | Done | YAML rule loader with equals/contains/regex conditions; backend can load/reload custom rules |
 
 ## Work log
 
@@ -57,3 +58,4 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 - 2026-06-10: Added cross-tenant task creation guard; tests verify tenant mismatch is rejected.
 - 2026-06-10: Added tenant agent config API and heartbeat config sync; Go agent applies task polling/snapshot/demo settings from backend. Tests and smoke pass.
 - 2026-06-10: Added raw evidence hashing/reference fields and SQLite raw_evidence API. Events/alerts now carry `raw_ref` and `raw_hash`; tests and smoke pass.
+- 2026-06-10: Added YAML detection rule loader and custom rule execution path. Example rule file added; tests and smoke pass.

@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass
 from typing import Iterable, List, Optional
 
+from .rules import GenericRule, detect_with_rules
+
 from .schemas import Alert, EventType, NormalizedEvent, Severity, Source
 
 
@@ -51,7 +53,7 @@ BUILTIN_BAD_DOMAINS = {"malicious.example"}
 BUILTIN_BAD_HASHES = {"0" * 64}
 
 
-def detect_event(event: NormalizedEvent) -> List[Alert]:
+def detect_event(event: NormalizedEvent, custom_rules: Optional[Iterable[GenericRule]] = None) -> List[Alert]:
     alerts: List[Alert] = []
     cmd = event.command_line or ""
     proc = (event.process_name or "").split("\\")[-1].lower()
@@ -68,13 +70,16 @@ def detect_event(event: NormalizedEvent) -> List[Alert]:
     if _ioc_hit(event):
         alerts.append(_alert_from_event(event, IOC_MATCH, f"IOC match in event {event.id}"))
 
+    if custom_rules:
+        alerts.extend(detect_with_rules(event, custom_rules))
+
     return alerts
 
 
-def detect_many(events: Iterable[NormalizedEvent]) -> List[Alert]:
+def detect_many(events: Iterable[NormalizedEvent], custom_rules: Optional[Iterable[GenericRule]] = None) -> List[Alert]:
     alerts: List[Alert] = []
     for event in events:
-        alerts.extend(detect_event(event))
+        alerts.extend(detect_event(event, custom_rules=custom_rules))
     return alerts
 
 

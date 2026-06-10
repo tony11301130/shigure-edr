@@ -1,0 +1,26 @@
+# Minimal M1 rule-loader format. This is intentionally smaller than Sigma;
+# it gives us versioned server-side custom detections before adding a full Sigma adapter.
+rules:
+  - rule_id: custom.windows.curl_download
+    title: Curl download command observed
+    severity: medium
+    event_type: process_start
+    mitre: [T1105]
+    description: A process command line contains curl, often used to download tooling.
+    conditions:
+      - field: command_line
+        op: icontains
+        value: curl
+      - field: command_line
+        op: regex
+        value: "https?://"
+
+  - rule_id: custom.windows.suspicious_temp_execution
+    title: Executable launched from temp path
+    severity: medium
+    event_type: process_start
+    mitre: [T1204]
+    conditions:
+      - field: process_name
+        op: regex
+        value: "(?i)(\\\\temp\\\\|/tmp/)"

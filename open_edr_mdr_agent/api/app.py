@@ -24,6 +24,7 @@ from open_edr_mdr_agent.api.models import (
 )
 from open_edr_mdr_agent.api.store import SQLiteStore
 from open_edr_mdr_agent.core.detection import detect_many
+from open_edr_mdr_agent.core.rules import load_rules
 from open_edr_mdr_agent.core.schemas import Alert, NormalizedEvent, Severity, Source
 
 DEFAULT_DB = os.environ.get("OPEN_EDR_MDR_DB", "/tmp/open-edr-mdr-agent.sqlite3")
@@ -34,6 +35,7 @@ DEFAULT_ADMIN_TOKEN = os.environ.get("OPEN_EDR_MDR_ADMIN_TOKEN", "dev-admin-toke
 def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = True) -> FastAPI:
     app = FastAPI(title="Open EDR MDR Agent API", version="0.1.0")
     store = SQLiteStore(db_path)
+    app.state.custom_rules = load_rules(os.environ.get("OPEN_EDR_MDR_RULES"))
     if create_dev_token:
         store.create_enrollment_token("default", token=DEFAULT_DEV_TOKEN, max_uses=None)
     app.state.store = store
@@ -78,7 +80,7 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
                 event.host = agent["host"]
             normalized.append(event)
         accepted = store.insert_events(agent["agent_id"], normalized)
-        alerts = detect_many(normalized)
+        alerts = detect_many(normalized, custom_rules=app.state.custom_rules)
         # Ensure generated alerts are tenant-scoped through raw metadata.
         for alert in alerts:
             alert.raw = {**(alert.raw or {}), "tenant_id": agent["tenant_id"], "agent_id": agent["agent_id"]}
@@ -107,6 +109,11 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
         with store.connect() as conn:
             row = conn.execute("select * from tasks where task_id=?", (task_id,)).fetchone()
             return store._task_record(dict(row))
+
+    @app.post("/api/v1/admin/rules/reload")
+    def reload_rules(_admin=Depends(_admin_auth)):
+        app.state.custom_rules = load_rules(os.environ.get("OPEN_EDR_MDR_RULES"))
+        return {"rules_loaded": len(app.state.custom_rules)}
 
     @app.get("/api/v1/admin/agents")
     def list_agents(tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):
