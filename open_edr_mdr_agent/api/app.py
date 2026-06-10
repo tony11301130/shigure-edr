@@ -228,6 +228,13 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
     def list_raw_evidence(tenant_id: str = Query("default"), kind: Optional[str] = None, limit: int = 100, _admin=Depends(_admin_auth)):
         return {"tenant_id": tenant_id, "evidence": store.list_raw_evidence(tenant_id, kind=kind, limit=limit)}
 
+    @app.get("/api/v1/admin/raw-evidence/by-hash/{sha256}")
+    def get_raw_evidence_by_hash(sha256: str, tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):
+        evidence = store.get_raw_evidence_by_hash(tenant_id, sha256)
+        if not evidence:
+            raise HTTPException(status_code=404, detail="raw_evidence_not_found")
+        return evidence
+
     @app.get("/api/v1/admin/investigate/endpoint-context")
     def endpoint_context(host: str, tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):
         agents = [a for a in store.list_agents(tenant_id) if a.get("host") == host]

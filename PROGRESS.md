@@ -75,6 +75,7 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 | M1.37 | Enrollment token revocation | Done | Admin API can revoke tenant enrollment tokens and block future use |
 | M1.38 | Stale agent offline marking | Done | Agent-health maintenance marks stale endpoints offline while generating gap alerts |
 | M1.39 | Alert title filter | Done | Alert listing supports title substring search for triage and quick lookup |
+| M1.40 | Raw evidence hash lookup | Done | Raw evidence can be fetched by SHA256 as well as raw_ref |
 
 ## Work log
 
@@ -133,3 +134,4 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 - 2026-06-10: Added enrollment token revocation API and verified revoked tokens cannot enroll new agents. Tests, Windows cross-build, and smoke pass.
 - 2026-06-10: Agent-health detection now marks stale agents offline in addition to generating telemetry-gap alerts. Tests, Windows cross-build, and smoke pass.
 - 2026-06-10: Added alert title substring filter for quick triage lookup. Tests, Windows cross-build, and smoke pass.
+- 2026-06-10: Added raw evidence lookup by SHA256 for hash-first evidence workflows. Tests, Windows cross-build, and smoke pass.

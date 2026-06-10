@@ -633,6 +633,15 @@ class SQLiteStore:
         data["payload"] = json.loads(data.pop("payload_json"))
         return data
 
+    def get_raw_evidence_by_hash(self, tenant_id: str, sha256: str) -> Optional[Dict[str, Any]]:
+        with self.connect() as conn:
+            row = conn.execute("select * from raw_evidence where tenant_id=? and sha256=? order by created_at desc limit 1", (tenant_id, sha256)).fetchone()
+        if not row:
+            return None
+        data = dict(row)
+        data["payload"] = json.loads(data.pop("payload_json"))
+        return data
+
     def list_raw_evidence(self, tenant_id: str, kind: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
         q = "select raw_ref, tenant_id, kind, sha256, created_at from raw_evidence where tenant_id=?"
         args: list[Any] = [tenant_id]

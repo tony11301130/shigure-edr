@@ -27,3 +27,7 @@ def test_raw_evidence_list_supports_kind_filter(tmp_path):
     fetched = client.get("/api/v1/admin/raw-evidence", headers=ADMIN, params={"tenant_id": "default", "raw_ref": refs[0]["raw_ref"]})
     assert fetched.status_code == 200
     assert fetched.json()["payload"] == {"source": "raw-list-test"}
+
+    by_hash = client.get(f"/api/v1/admin/raw-evidence/by-hash/{refs[0]['sha256']}", headers=ADMIN, params={"tenant_id": "default"})
+    assert by_hash.status_code == 200
+    assert by_hash.json()["raw_ref"] == refs[0]["raw_ref"]
