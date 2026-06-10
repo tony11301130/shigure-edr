@@ -352,6 +352,11 @@ class SQLiteStore:
         with self.connect() as conn:
             return [dict(r) for r in conn.execute("select * from agents where tenant_id=? order by host", (tenant_id,)).fetchall()]
 
+    def get_agent(self, tenant_id: str, agent_id: str) -> Optional[Dict[str, Any]]:
+        with self.connect() as conn:
+            row = conn.execute("select * from agents where tenant_id=? and agent_id=?", (tenant_id, agent_id)).fetchone()
+        return dict(row) if row else None
+
     def tenant_summary(self, tenant_id: str) -> Dict[str, Any]:
         with self.connect() as conn:
             agent_status = {r["status"]: r["count"] for r in conn.execute("select status, count(*) count from agents where tenant_id=? group by status", (tenant_id,)).fetchall()}
