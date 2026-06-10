@@ -1,0 +1,67 @@
+# Intranet V1 Deployment Runbook
+
+This runbook captures the current single-tenant intranet deployment path for the M1 prototype. It intentionally keeps the endpoint-facing shape to one branded Windows agent and a central server with outbound agent polling only.
+
+## Server
+
+1. Create an isolated Python environment and install the project.
+2. Set runtime configuration:
+
+```bash
+export OPEN_EDR_MDR_DB=/var/lib/open-edr-mdr/open-edr-mdr.sqlite3
+export OPEN_EDR_MDR_ADMIN_TOKEN='<operator-admin-token>'
+export OPEN_EDR_MDR_DEV_ENROLLMENT_TOKEN='<initial-enrollment-token>'
+```
+
+3. Start the API behind an intranet reverse proxy:
+
+```bash
+open-edr-mdr-agent serve --host 127.0.0.1 --port 8080
+```
+
+4. Validate server health and UI:
+
+```bash
+curl http://127.0.0.1:8080/health
+# UI: http://<intranet-host>/ui
+```
+
+## Windows agent
+
+The agent communicates outbound to the server. It enrolls once, stores local state, heartbeats for config, uploads telemetry, polls for queued read-only tasks, and uploads task results with raw evidence hashes.
+
+```powershell
+open-edr-agent.exe `
+  -server https://edr.internal.example `
+  -enrollment-token <initial-enrollment-token> `
+  -state C:\ProgramData\OpenEDRMDR\agent-state.json
+```
+
+Install as a Windows Service after validating the command line:
+
+```powershell
+open-edr-agent.exe --install-service
+Start-Service OpenEDRMDRAgent
+```
+
+Uninstall if needed:
+
+```powershell
+Stop-Service OpenEDRMDRAgent
+open-edr-agent.exe --uninstall-service
+```
+
+## Analyst validation checklist
+
+- Enrolled endpoint appears in `/api/v1/admin/agents` and `/ui`.
+- Heartbeat returns tenant config and `tasks_pending` state.
+- Events appear in `/api/v1/admin/events` and can be filtered by host, process, user, remote IP, domain, indicator, or SHA256.
+- Alerts appear for encoded PowerShell, suspicious script networking, Windows service/task event logs, and known IOC matches.
+- Read-only tasks can be queued only from the catalog; malformed args are rejected server-side.
+- Task results include `raw_ref` and `raw_hash` and can be fetched through raw evidence APIs.
+- Cases can attach alerts, events, task results, and raw evidence references.
+- Saved hunts can be created, updated, disabled, executed, and reviewed.
+
+## V1 safety boundaries
+
+Do not add or enable destructive response actions in V1: no host isolation, kill process, file delete/write, registry write/delete, reboot, or logoff. Tasking remains read-only investigation and evidence collection.
