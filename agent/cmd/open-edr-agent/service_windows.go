@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"golang.org/x/sys/windows/svc"
 )
 
 func installService(serviceName, displayName, server, enrollToken, statePath, spoolPath string) error {
@@ -31,4 +33,51 @@ func uninstallService(serviceName string) error {
 		return fmt.Errorf("sc delete failed: %w: %s", err, string(out))
 	}
 	return nil
+}
+
+func runWindowsServiceIfNeeded(serviceName string, opts agentOptions) (bool, error) {
+	isService, err := svc.IsWindowsService()
+	if err != nil {
+		return false, err
+	}
+	if !isService {
+		return false, nil
+	}
+	return true, svc.Run(serviceName, &windowsService{opts: opts})
+}
+
+type windowsService struct {
+	opts agentOptions
+}
+
+func (s *windowsService) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<- svc.Status) (bool, uint32) {
+	changes <- svc.Status{State: svc.StartPending}
+	stop := make(chan struct{})
+	done := make(chan error, 1)
+	go func() { done <- runAgent(s.opts, stop) }()
+	changes <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
+	for {
+		select {
+		case req := <-r:
+			switch req.Cmd {
+			case svc.Interrogate:
+				changes <- req.CurrentStatus
+			case svc.Stop, svc.Shutdown:
+				changes <- svc.Status{State: svc.StopPending}
+				close(stop)
+				err := <-done
+				if err != nil {
+					return false, 1
+				}
+				return false, 0
+			default:
+				// Pause/continue and other controls are intentionally unsupported.
+			}
+		case err := <-done:
+			if err != nil {
+				return false, 1
+			}
+			return false, 0
+		}
+	}
 }

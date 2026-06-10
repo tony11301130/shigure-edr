@@ -19,6 +19,18 @@ import (
 
 const version = "0.1.0-dev"
 
+type agentOptions struct {
+	Server            string
+	EnrollToken       string
+	StatePath         string
+	SpoolPath         string
+	Once              bool
+	DemoEvent         bool
+	CollectSnapshot   bool
+	MaxSnapshotEvents int
+	Interval          time.Duration
+}
+
 func main() {
 	server := flag.String("server", "http://127.0.0.1:8000", "backend server URL")
 	enrollToken := flag.String("enroll-token", "dev-token", "tenant enrollment token")
@@ -35,6 +47,8 @@ func main() {
 	serviceDisplayName := flag.String("service-display-name", "Open EDR MDR Agent", "Windows service display name")
 	flag.Parse()
 
+	opts := agentOptions{Server: *server, EnrollToken: *enrollToken, StatePath: *statePath, SpoolPath: *spoolPath, Once: *once, DemoEvent: *demoEvent, CollectSnapshot: *collectSnapshot, MaxSnapshotEvents: *maxSnapshotEvents, Interval: *interval}
+
 	if *installSvc {
 		if err := installService(*serviceName, *serviceDisplayName, *server, *enrollToken, *statePath, *spoolPath); err != nil {
 			log.Fatalf("install service failed: %v", err)
@@ -49,38 +63,55 @@ func main() {
 		log.Printf("service uninstalled: %s", *serviceName)
 		return
 	}
+	serviceHandled, err := runWindowsServiceIfNeeded(*serviceName, opts)
+	if err != nil {
+		log.Fatalf("service failed: %v", err)
+	}
+	if serviceHandled {
+		return
+	}
+	if err := runAgent(opts, nil); err != nil {
+		log.Fatalf("agent stopped with error: %v", err)
+	}
+}
 
-	client := agentapi.New(*server)
-	agentState, err := state.Load(*statePath)
+func runAgent(opts agentOptions, stop <-chan struct{}) error {
+	client := agentapi.New(opts.Server)
+	agentState, err := state.Load(opts.StatePath)
 	if err != nil {
 		log.Printf("state not found, enrolling: %v", err)
-		agentState, err = enroll(client, *enrollToken)
+		agentState, err = enroll(client, opts.EnrollToken)
 		if err != nil {
-			log.Fatalf("enrollment failed: %v", err)
+			return fmt.Errorf("enrollment failed: %w", err)
 		}
-		if err := state.Save(*statePath, agentState); err != nil {
-			log.Fatalf("save state failed: %v", err)
+		if err := state.Save(opts.StatePath, agentState); err != nil {
+			return fmt.Errorf("save state failed: %w", err)
 		}
 		log.Printf("enrolled agent_id=%s tenant_id=%s", agentState.AgentID, agentState.TenantID)
 	}
 
-	runtimeConfig := agentapi.AgentConfig{TaskPollSeconds: int(interval.Seconds()), HeartbeatSeconds: int(interval.Seconds()), UploadIntervalSeconds: int(interval.Seconds()), MaxSnapshotEvents: *maxSnapshotEvents, CollectSnapshot: *collectSnapshot, CollectProcessSnapshot: true, CollectNetworkSnapshot: true, CollectWindowsEventLogs: true, DemoSuspiciousEvent: *demoEvent}
+	runtimeConfig := agentapi.AgentConfig{TaskPollSeconds: int(opts.Interval.Seconds()), HeartbeatSeconds: int(opts.Interval.Seconds()), UploadIntervalSeconds: int(opts.Interval.Seconds()), MaxSnapshotEvents: opts.MaxSnapshotEvents, CollectSnapshot: opts.CollectSnapshot, CollectProcessSnapshot: true, CollectNetworkSnapshot: true, CollectWindowsEventLogs: true, DemoSuspiciousEvent: opts.DemoEvent}
 	for {
-		newConfig, err := runCycle(client, agentState, *spoolPath, runtimeConfig)
+		newConfig, err := runCycle(client, agentState, opts.SpoolPath, runtimeConfig)
 		if err != nil {
 			log.Printf("cycle error: %v", err)
 		}
 		if newConfig != nil {
-			runtimeConfig = mergeCLIOverrides(*newConfig, *demoEvent, *maxSnapshotEvents)
+			runtimeConfig = mergeCLIOverrides(*newConfig, opts.DemoEvent, opts.MaxSnapshotEvents)
 		}
-		if *once {
-			return
+		if opts.Once {
+			return nil
 		}
 		sleepSeconds := runtimeConfig.TaskPollSeconds
 		if sleepSeconds <= 0 {
-			sleepSeconds = int(interval.Seconds())
+			sleepSeconds = int(opts.Interval.Seconds())
 		}
-		time.Sleep(time.Duration(sleepSeconds) * time.Second)
+		select {
+		case <-stop:
+			log.Printf("stop requested")
+			return nil
+		case <-time.After(time.Duration(sleepSeconds) * time.Second):
+		}
 	}
 }
 

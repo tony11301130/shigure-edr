@@ -79,6 +79,9 @@ GOOS=windows GOARCH=amd64 go build -o open-edr-agent.exe ./agent/cmd/open-edr-ag
 .\open-edr-agent.exe --install-service --server https://edr.example.local --enroll-token <tenant-token>
 sc.exe start OpenEDRMDRAgent
 
+# The agent binary detects Windows Service context and runs through the Service Control Manager.
+# Running the same binary from a console keeps the foreground loop behavior for diagnostics.
+
 # Remove service if needed
 .\open-edr-agent.exe --uninstall-service
 ```

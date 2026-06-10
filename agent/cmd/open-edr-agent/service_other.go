@@ -11,3 +11,7 @@ func installService(serviceName, displayName, server, enrollToken, statePath, sp
 func uninstallService(serviceName string) error {
 	return fmt.Errorf("service uninstallation is only supported on Windows")
 }
+
+func runWindowsServiceIfNeeded(serviceName string, opts agentOptions) (bool, error) {
+	return false, nil
+}
