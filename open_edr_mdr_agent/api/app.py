@@ -141,6 +141,23 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
     def tenant_summary(tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):
         return store.tenant_summary(tenant_id)
 
+    @app.get("/api/v1/admin/events/count")
+    def count_events(
+        _admin=Depends(_admin_auth),
+        tenant_id: str = Query("default"),
+        host: Optional[str] = None,
+        event_type: Optional[str] = None,
+        process_name: Optional[str] = None,
+        remote_ip: Optional[str] = None,
+        domain: Optional[str] = None,
+        indicator: Optional[str] = None,
+    ):
+        return {"tenant_id": tenant_id, "count": store.count_events(tenant_id, host=host, event_type=event_type, process_name=process_name, remote_ip=remote_ip, domain=domain, indicator=indicator)}
+
+    @app.get("/api/v1/admin/events/related", response_model=list[NormalizedEvent])
+    def related_events(entity_type: str, value: str, tenant_id: str = Query("default"), limit: int = 100, _admin=Depends(_admin_auth)):
+        return store.related_events(tenant_id, entity_type=entity_type, value=value, limit=limit)
+
     @app.get("/api/v1/admin/events/{event_id}", response_model=NormalizedEvent)
     def get_event(event_id: str, tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):
         event = store.get_event(tenant_id, event_id)
@@ -204,6 +221,7 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
         events = store.list_events(tenant_id, host=host, limit=limit)
         by_pid = {e.process_id: e for e in events if e.process_id}
         chain = []
+        children = [e for e in events if e.parent_process_id == process_id]
         seen = set()
         current = process_id
         while current and current not in seen and current in by_pid:
@@ -211,7 +229,25 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
             event = by_pid[current]
             chain.append(event)
             current = event.parent_process_id
-        return {"tenant_id": tenant_id, "host": host, "process_id": process_id, "chain": chain}
+        return {"tenant_id": tenant_id, "host": host, "process_id": process_id, "chain": chain, "children": children[:100]}
+
+    @app.get("/api/v1/admin/investigate/behavior-context")
+    def behavior_context(host: str, tenant_id: str = Query("default"), process_id: Optional[str] = None, indicator: Optional[str] = None, limit: int = 200, _admin=Depends(_admin_auth)):
+        events = store.list_events(tenant_id, host=host, indicator=indicator, limit=limit)
+        if process_id:
+            events = [e for e in events if e.process_id == process_id or e.parent_process_id == process_id]
+        by_type: dict[str, int] = {}
+        for event in events:
+            by_type[event.event_type.value] = by_type.get(event.event_type.value, 0) + 1
+        return {"tenant_id": tenant_id, "host": host, "process_id": process_id, "indicator": indicator, "counts_by_type": by_type, "events": events}
+
+    @app.get("/api/v1/admin/investigate/network-context")
+    def network_context(host: str, tenant_id: str = Query("default"), process_id: Optional[str] = None, remote_ip: Optional[str] = None, limit: int = 200, _admin=Depends(_admin_auth)):
+        events = store.list_events(tenant_id, host=host, event_type="network_connection", remote_ip=remote_ip, limit=limit)
+        if process_id:
+            events = [e for e in events if e.process_id == process_id]
+        remotes = sorted({f"{e.remote_ip}:{e.remote_port}" for e in events if e.remote_ip})
+        return {"tenant_id": tenant_id, "host": host, "process_id": process_id, "remote_ip": remote_ip, "remotes": remotes, "events": events}
 
     @app.post("/api/v1/admin/cases", response_model=CaseRecord)
     def create_case(req: CaseCreateRequest, _admin=Depends(_admin_auth)):

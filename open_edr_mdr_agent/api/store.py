@@ -338,6 +338,42 @@ class SQLiteStore:
             row = conn.execute("select alert_json from alerts where tenant_id=? and alert_id=?", (tenant_id, alert_id)).fetchone()
         return Alert.model_validate_json(row["alert_json"]) if row else None
 
+    def count_events(
+        self,
+        tenant_id: str,
+        host: Optional[str] = None,
+        event_type: Optional[str] = None,
+        process_name: Optional[str] = None,
+        remote_ip: Optional[str] = None,
+        domain: Optional[str] = None,
+        indicator: Optional[str] = None,
+    ) -> int:
+        q, args = self._event_query("count(*) count", tenant_id, host=host, event_type=event_type, process_name=process_name, remote_ip=remote_ip, domain=domain, indicator=indicator)
+        with self.connect() as conn:
+            return int(conn.execute(q, args).fetchone()["count"])
+
+    def related_events(self, tenant_id: str, entity_type: str, value: str, limit: int = 100) -> List[NormalizedEvent]:
+        field_map = {
+            "host": "host",
+            "process_id": "process_id",
+            "parent_process_id": "process_id",
+            "process_name": "process_name",
+            "remote_ip": "remote_ip",
+            "domain": "domain",
+            "command_line": "command_line",
+        }
+        field = field_map.get(entity_type)
+        if not field:
+            return []
+        if field in {"process_name", "command_line"}:
+            q = f"select event_json from events where tenant_id=? and {field} like ? order by timestamp desc limit ?"
+            args: list[Any] = [tenant_id, f"%{value}%", limit]
+        else:
+            q = f"select event_json from events where tenant_id=? and {field}=? order by timestamp desc limit ?"
+            args = [tenant_id, value, limit]
+        with self.connect() as conn:
+            return [NormalizedEvent.model_validate_json(r["event_json"]) for r in conn.execute(q, args).fetchall()]
+
     def list_events(
         self,
         tenant_id: str,
@@ -349,26 +385,7 @@ class SQLiteStore:
         indicator: Optional[str] = None,
         limit: int = 100,
     ) -> List[NormalizedEvent]:
-        q = "select event_json from events where tenant_id=?"
-        args: list[Any] = [tenant_id]
-        if host:
-            q += " and host=?"
-            args.append(host)
-        if event_type:
-            q += " and event_type=?"
-            args.append(event_type)
-        if process_name:
-            q += " and process_name like ?"
-            args.append(f"%{process_name}%")
-        if remote_ip:
-            q += " and remote_ip=?"
-            args.append(remote_ip)
-        if domain:
-            q += " and domain=?"
-            args.append(domain)
-        if indicator:
-            q += " and event_json like ?"
-            args.append(f"%{indicator}%")
+        q, args = self._event_query("event_json", tenant_id, host=host, event_type=event_type, process_name=process_name, remote_ip=remote_ip, domain=domain, indicator=indicator)
         q += " order by timestamp desc limit ?"
         args.append(limit)
         with self.connect() as conn:
@@ -482,6 +499,29 @@ class SQLiteStore:
         with self.connect() as conn:
             row = conn.execute("select count(*) c from tasks where tenant_id=? and agent_id=? and status='queued'", (tenant_id, agent_id)).fetchone()
             return int(row["c"])
+
+    def _event_query(self, select: str, tenant_id: str, host: Optional[str] = None, event_type: Optional[str] = None, process_name: Optional[str] = None, remote_ip: Optional[str] = None, domain: Optional[str] = None, indicator: Optional[str] = None) -> tuple[str, list[Any]]:
+        q = f"select {select} from events where tenant_id=?"
+        args: list[Any] = [tenant_id]
+        if host:
+            q += " and host=?"
+            args.append(host)
+        if event_type:
+            q += " and event_type=?"
+            args.append(event_type)
+        if process_name:
+            q += " and process_name like ?"
+            args.append(f"%{process_name}%")
+        if remote_ip:
+            q += " and remote_ip=?"
+            args.append(remote_ip)
+        if domain:
+            q += " and domain=?"
+            args.append(domain)
+        if indicator:
+            q += " and event_json like ?"
+            args.append(f"%{indicator}%")
+        return q, args
 
     def _case_record(self, row: Dict[str, Any]) -> CaseRecord:
         return CaseRecord(

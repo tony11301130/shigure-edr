@@ -40,3 +40,20 @@ def test_investigation_hunt_context_and_process_chain(tmp_path):
     assert chain.status_code == 200
     names = [e["process_name"] for e in chain.json()["chain"]]
     assert names == ["powershell.exe", "explorer.exe"]
+
+    count = client.get("/api/v1/admin/events/count", headers=ADMIN, params={"tenant_id":"default", "host":"INV01"})
+    assert count.status_code == 200
+    assert count.json()["count"] == 3
+
+    related = client.get("/api/v1/admin/events/related", headers=ADMIN, params={"tenant_id":"default", "entity_type":"process_id", "value":"200"})
+    assert related.status_code == 200
+    assert len(related.json()) == 2
+
+    behavior = client.get("/api/v1/admin/investigate/behavior-context", headers=ADMIN, params={"tenant_id":"default", "host":"INV01", "process_id":"200"})
+    assert behavior.status_code == 200
+    assert behavior.json()["counts_by_type"]["process_start"] == 1
+    assert behavior.json()["counts_by_type"]["network_connection"] == 1
+
+    network = client.get("/api/v1/admin/investigate/network-context", headers=ADMIN, params={"tenant_id":"default", "host":"INV01", "process_id":"200"})
+    assert network.status_code == 200
+    assert network.json()["remotes"] == ["203.0.113.10:443"]
