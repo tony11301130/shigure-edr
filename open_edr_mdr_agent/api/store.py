@@ -153,6 +153,15 @@ class SQLiteStore:
                 create index if not exists idx_tasks_agent_status on tasks(tenant_id, agent_id, status);
                 """
             )
+            self._ensure_column(conn, "events", "raw_ref", "text")
+            self._ensure_column(conn, "events", "raw_hash", "text")
+            self._ensure_column(conn, "alerts", "raw_ref", "text")
+            self._ensure_column(conn, "alerts", "raw_hash", "text")
+
+    def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, ddl_type: str) -> None:
+        cols = {row["name"] for row in conn.execute(f"pragma table_info({table})").fetchall()}
+        if column not in cols:
+            conn.execute(f"alter table {table} add column {column} {ddl_type}")
 
     def get_agent_config(self, tenant_id: str = "default") -> AgentConfig:
         with self.connect() as conn:
