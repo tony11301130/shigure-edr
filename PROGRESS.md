@@ -55,6 +55,7 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 | M1.17 | Intranet EDR/MDR goal baseline | Done | Formalized intranet-first V1 goal, Fidelis parity, threat hunting, server tasking, and minimal UI scope |
 | M1.18 | Minimal intranet UI | Done | FastAPI-served single-page UI for summary, agents, alerts, cases, tasks, and indicator hunt |
 | M1.19 | Fidelis exact lookup parity | Done | Added tenant-scoped `get_alert_by_id` and `get_exact_event` admin APIs |
+| M1.20 | Read-only script catalog parity | Done | Added `list_readonly_scripts` catalog and server-side allowlist for task creation |
 
 ## Work log
 
@@ -93,3 +94,4 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 - 2026-06-10: Formalized `GOAL.md`: intranet-first EDR/MDR V1, one Windows agent, central server, reverse-proxy-friendly queued jobs, Fidelis API parity, threat hunting, and minimal UI. Multi-tenant expansion remains future-safe through tenant-aware schema.
 - 2026-06-10: Added minimal FastAPI-served intranet UI at `/ui` with dashboard summary, agents, alerts, cases, tasks, and indicator hunt. Tests/smoke pass.
 - 2026-06-10: Added Fidelis parity exact lookup APIs for alert ID and event ID with tenant scoping. Tests/smoke pass.
+- 2026-06-10: Added read-only task/script catalog API and server-side task allowlist enforcement to match Fidelis `list_readonly_scripts` / safe `run_readonly_script` workflow. Tests/smoke pass.
