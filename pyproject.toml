@@ -1,0 +1,22 @@
+[project]
+name = "open-edr-mdr-agent"
+version = "0.1.0"
+description = "Open-source EDR sensor fusion layer with a Fidelis-like MDR endpoint tool interface."
+requires-python = ">=3.10"
+dependencies = [
+  "pydantic>=2.0",
+  "typer>=0.12",
+  "rich>=13.0",
+  "pyyaml>=6.0",
+]
+
+[project.scripts]
+open-edr-mdr-agent = "open_edr_mdr_agent.cli:app"
+
+[tool.setuptools.packages.find]
+include = ["open_edr_mdr_agent*"]
+exclude = ["configs*", "docs*", "scripts*", "tests*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

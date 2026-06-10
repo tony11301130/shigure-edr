@@ -1,0 +1,41 @@
+tenant_id: default
+
+providers:
+  local_json:
+    enabled: true
+    data_dir: ./sample-data
+
+  wazuh:
+    enabled: false
+    # api_url: https://wazuh.example:55000
+    # username_env: WAZUH_USERNAME
+    # password_env: WAZUH_PASSWORD
+    # alerts_json_path: /var/ossec/logs/alerts/alerts.json
+
+  fleet_osquery:
+    enabled: false
+    # api_url: https://fleet.example
+    # token_env: FLEET_API_TOKEN
+
+  velociraptor:
+    enabled: false
+    # api_url: https://velociraptor.example:8000
+    # config_path: /etc/velociraptor/api.config.yaml
+
+  falco:
+    enabled: false
+    # jsonl_path: /var/log/falco/events.jsonl
+
+  tetragon:
+    enabled: false
+    # grpc_endpoint: localhost:54321
+
+safety:
+  mode: read_only
+  high_impact_actions_enabled: false
+  require_approval_for:
+    - isolate_host
+    - terminate_process
+    - delete_file
+    - delete_endpoint
+    - execute_containment_script
