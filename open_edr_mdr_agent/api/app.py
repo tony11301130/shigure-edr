@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Annotated, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from open_edr_mdr_agent.api.cases import CaseCreateRequest, CaseEvidenceRecord, CaseEvidenceRequest, CaseRecord, CaseUpdateRequest
 from open_edr_mdr_agent.api.models import (
@@ -44,6 +45,14 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
     @app.get("/health")
     def health():
         return {"status": "ok"}
+
+    @app.get("/", include_in_schema=False)
+    def root():
+        return RedirectResponse(url="/ui")
+
+    @app.get("/ui", response_class=HTMLResponse, include_in_schema=False)
+    def ui():
+        return UI_HTML
 
     @app.post("/api/v1/enroll", response_model=EnrollmentResponse)
     def enroll(req: EnrollmentRequest):
@@ -289,3 +298,66 @@ def bind_auth_dependency(app: FastAPI) -> FastAPI:
 
 
 app = create_app()
+
+UI_HTML = r"""
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Open EDR MDR // Intranet Console</title>
+  <style>
+    :root{--bg:#080b0f;--panel:#0f151d;--panel2:#131d28;--line:#263544;--text:#d8e2ec;--muted:#7f92a5;--green:#6dff9d;--amber:#ffcc66;--red:#ff6b6b;--cyan:#6bdcff;--blue:#7aa8ff;--shadow:0 18px 60px rgba(0,0,0,.42)}
+    *{box-sizing:border-box} body{margin:0;background:radial-gradient(circle at 20% 0%,#142032 0,#080b0f 32%,#05070a 100%);color:var(--text);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;min-height:100vh}
+    body:before{content:"";position:fixed;inset:0;background:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);background-size:28px 28px;mask-image:linear-gradient(to bottom,rgba(0,0,0,.7),transparent);pointer-events:none}
+    header{display:flex;align-items:center;justify-content:space-between;padding:22px 28px;border-bottom:1px solid var(--line);background:rgba(8,11,15,.84);backdrop-filter:blur(16px);position:sticky;top:0;z-index:2}
+    h1{font-size:18px;margin:0;letter-spacing:.12em;text-transform:uppercase}.mark{color:var(--green);text-shadow:0 0 18px rgba(109,255,157,.35)}
+    .controls{display:flex;gap:10px;align-items:center} input,button{font:inherit;border:1px solid var(--line);background:#0b1118;color:var(--text);padding:10px 12px;border-radius:4px} input{min-width:220px} button{cursor:pointer;color:var(--green);border-color:#315143;background:#0d1915} button:hover{filter:brightness(1.15)}
+    main{padding:28px;display:grid;gap:18px}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:18px}.card{background:linear-gradient(180deg,rgba(19,29,40,.96),rgba(12,17,24,.96));border:1px solid var(--line);box-shadow:var(--shadow);border-radius:10px;overflow:hidden}.card h2{margin:0;padding:14px 16px;border-bottom:1px solid var(--line);font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--cyan)}.card .body{padding:14px 16px}.span3{grid-column:span 3}.span4{grid-column:span 4}.span6{grid-column:span 6}.span8{grid-column:span 8}.span12{grid-column:span 12}
+    .metric{font-size:34px;color:var(--green);line-height:1}.label{color:var(--muted);font-size:12px;margin-top:6px}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.pill{border:1px solid var(--line);background:#0b1118;padding:4px 8px;border-radius:999px;color:var(--muted);font-size:12px}.sev-high,.sev-critical{color:var(--red)}.sev-medium{color:var(--amber)}.sev-low,.sev-info{color:var(--cyan)}
+    table{width:100%;border-collapse:collapse;font-size:12px} th,td{padding:9px 8px;border-bottom:1px solid rgba(38,53,68,.72);vertical-align:top;text-align:left} th{color:var(--muted);font-weight:600;text-transform:uppercase;font-size:11px} tr:hover td{background:rgba(109,220,255,.04)} code{color:var(--green);white-space:pre-wrap}.muted{color:var(--muted)}.error{color:var(--red)}
+    @media(max-width:900px){.grid{grid-template-columns:1fr}.span3,.span4,.span6,.span8,.span12{grid-column:span 1} header{display:block}.controls{margin-top:14px;flex-wrap:wrap} input{min-width:0;width:100%}}
+  </style>
+</head>
+<body>
+<header>
+  <h1><span class="mark">OPEN EDR MDR</span> // INTRANET V1</h1>
+  <div class="controls">
+    <input id="tenant" value="default" title="tenant" />
+    <input id="token" type="password" value="dev-admin-token" title="admin token" />
+    <button onclick="loadAll()">REFRESH</button>
+  </div>
+</header>
+<main>
+  <section class="grid" id="metrics"></section>
+  <section class="grid">
+    <div class="card span6"><h2>Indicator Hunt</h2><div class="body"><div class="row"><input id="indicator" placeholder="IP / domain / hash / command fragment" style="flex:1"><button onclick="hunt()">HUNT</button></div><div id="hunt" style="margin-top:14px"></div></div></div>
+    <div class="card span6"><h2>Operational Distribution</h2><div class="body" id="dist"></div></div>
+  </section>
+  <section class="grid">
+    <div class="card span6"><h2>Agents</h2><div class="body" id="agents"></div></div>
+    <div class="card span6"><h2>Alerts</h2><div class="body" id="alerts"></div></div>
+    <div class="card span6"><h2>Cases</h2><div class="body" id="cases"></div></div>
+    <div class="card span6"><h2>Tasks</h2><div class="body" id="tasks"></div></div>
+  </section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+function tenant(){return encodeURIComponent($('tenant').value||'default')}
+function headers(){return {'Authorization':'Bearer '+$('token').value}}
+async function api(path){const r=await fetch(path,{headers:headers()}); if(!r.ok) throw new Error(path+' '+r.status); return await r.json()}
+function table(rows,cols){if(!rows||!rows.length)return '<span class="muted">no records</span>';return '<table><thead><tr>'+cols.map(c=>'<th>'+c[0]+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+cols.map(c=>'<td>'+esc(c[1](r)??'')+'</td>').join('')+'</tr>').join('')+'</tbody></table>'}
+function esc(v){return String(v).replace(/[&<>]/g,s=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[s]))}
+function pills(obj){return Object.entries(obj||{}).map(([k,v])=>`<span class="pill">${esc(k)}: <b>${esc(v)}</b></span>`).join(' ')}
+async function loadAll(){try{const t=tenant();const [s,a,al,c,ta]=await Promise.all([api(`/api/v1/admin/summary?tenant_id=${t}`),api(`/api/v1/admin/agents?tenant_id=${t}`),api(`/api/v1/admin/alerts?tenant_id=${t}&limit=25`),api(`/api/v1/admin/cases?tenant_id=${t}&limit=25`),api(`/api/v1/admin/tasks?tenant_id=${t}&limit=25`)]);renderSummary(s);renderAgents(a.agents);renderAlerts(al);renderCases(c);renderTasks(ta)}catch(e){$('metrics').innerHTML='<div class="card span12"><div class="body error">'+esc(e.message)+'</div></div>'}}
+function renderSummary(s){const c=s.counts||{};$('metrics').innerHTML=['agents','events','alerts','cases','tasks','raw_evidence'].map(k=>`<div class="card span3"><div class="body"><div class="metric">${c[k]??0}</div><div class="label">${k}</div></div></div>`).join('');$('dist').innerHTML=`<p>Agents ${pills(s.agent_status)}</p><p>Tasks ${pills(s.task_status)}</p><p>Cases ${pills(s.case_status)}</p><p>Alerts ${pills(s.alert_severity)}</p>`}
+function renderAgents(rows){$('agents').innerHTML=table(rows,[['Host',r=>r.host],['IP',r=>r.ip_address],['OS',r=>r.os],['Version',r=>r.agent_version],['Last Seen',r=>r.last_seen]])}
+function renderAlerts(rows){$('alerts').innerHTML=table(rows,[['Severity',r=>`<span class="sev-${r.severity}">${r.severity}</span>`],['Title',r=>r.title],['Host',r=>r.host],['Time',r=>r.timestamp]])}
+function renderCases(rows){$('cases').innerHTML=table(rows,[['Status',r=>r.status],['Severity',r=>r.severity],['Title',r=>r.title],['Assignee',r=>r.assignee||''],['Updated',r=>r.updated_at]])}
+function renderTasks(rows){$('tasks').innerHTML=table(rows,[['Status',r=>r.status],['Type',r=>r.task_type],['Agent',r=>(r.agent_id||'').slice(0,8)],['Raw',r=>r.raw_ref?'yes':''],['Created',r=>r.created_at]])}
+async function hunt(){try{const q=encodeURIComponent($('indicator').value);if(!q)return;$('hunt').innerHTML='<span class="muted">hunting...</span>';const r=await api(`/api/v1/admin/investigate/hunt?tenant_id=${tenant()}&indicator=${q}&limit=50`);$('hunt').innerHTML=`<p>Hosts ${pills(Object.fromEntries((r.hosts||[]).map(h=>[h,'hit'])))}</p>`+table(r.events||[],[['Type',e=>e.event_type],['Host',e=>e.host],['Process',e=>e.process_name],['Command',e=>e.command_line||e.remote_ip||e.domain||'']])}catch(e){$('hunt').innerHTML='<span class="error">'+esc(e.message)+'</span>'}}
+loadAll();
+</script>
+</body>
+</html>
+"""
