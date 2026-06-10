@@ -12,6 +12,7 @@ import (
 
 	"open-edr-mdr-agent/agent/internal/agentapi"
 	"open-edr-mdr-agent/agent/internal/collect"
+	"open-edr-mdr-agent/agent/internal/spool"
 	"open-edr-mdr-agent/agent/internal/state"
 	"open-edr-mdr-agent/agent/internal/tasks"
 )
@@ -22,6 +23,7 @@ func main() {
 	server := flag.String("server", "http://127.0.0.1:8000", "backend server URL")
 	enrollToken := flag.String("enroll-token", "dev-token", "tenant enrollment token")
 	statePath := flag.String("state", defaultStatePath(), "agent state path")
+	spoolPath := flag.String("spool", defaultSpoolPath(), "offline spool JSONL path")
 	once := flag.Bool("once", false, "run one heartbeat/telemetry/task cycle then exit")
 	demoEvent := flag.Bool("demo-suspicious-event", false, "send a demo suspicious PowerShell event for detection smoke test")
 	interval := flag.Duration("interval", 15*time.Second, "loop interval")
@@ -42,7 +44,7 @@ func main() {
 	}
 
 	for {
-		if err := runCycle(client, agentState, *demoEvent); err != nil {
+		if err := runCycle(client, agentState, *spoolPath, *demoEvent); err != nil {
 			log.Printf("cycle error: %v", err)
 		}
 		if *once {
@@ -64,19 +66,26 @@ func enroll(client *agentapi.Client, token string) (*state.State, error) {
 	return &state.State{TenantID: res.TenantID, AgentID: res.AgentID, AgentToken: res.AgentToken}, nil
 }
 
-func runCycle(client *agentapi.Client, s *state.State, sendDemo bool) error {
+func runCycle(client *agentapi.Client, s *state.State, spoolPath string, sendDemo bool) error {
+	if err := spool.Flush(spoolPath, client, s); err != nil {
+		log.Printf("spool flush failed: %v", err)
+	}
 	inv := collect.HostInventory()
 	_, err := client.Heartbeat(s.AgentID, s.AgentToken, map[string]any{
 		"host": inv.Host, "ip_address": inv.IPAddress, "os": inv.OS, "agent_version": version,
 		"health": map[string]any{"status": "ok"},
 	})
 	if err != nil {
-		return fmt.Errorf("heartbeat: %w", err)
+		log.Printf("heartbeat failed, continuing so telemetry can spool if needed: %v", err)
 	}
 
 	if sendDemo {
-		if err := client.IngestEvents(s.AgentID, s.AgentToken, []agentapi.NormalizedEvent{collect.DemoSuspiciousPowerShellEvent(s.TenantID)}); err != nil {
-			return fmt.Errorf("ingest demo event: %w", err)
+		events := []agentapi.NormalizedEvent{collect.DemoSuspiciousPowerShellEvent(s.TenantID)}
+		if err := client.IngestEvents(s.AgentID, s.AgentToken, events); err != nil {
+			if spoolErr := spool.AppendEvents(spoolPath, events); spoolErr != nil {
+				return fmt.Errorf("ingest demo event: %w; spool failed: %v", err, spoolErr)
+			}
+			log.Printf("ingest failed, events spooled: %v", err)
 		}
 	}
 
@@ -85,12 +94,12 @@ func runCycle(client *agentapi.Client, s *state.State, sendDemo bool) error {
 		return fmt.Errorf("claim tasks: %w", err)
 	}
 	for _, task := range claimed {
-		executeAndReport(client, s, task)
+		executeAndReport(client, s, spoolPath, task)
 	}
 	return nil
 }
 
-func executeAndReport(client *agentapi.Client, s *state.State, task agentapi.Task) {
+func executeAndReport(client *agentapi.Client, s *state.State, spoolPath string, task agentapi.Task) {
 	result, err := tasks.Execute(task.TaskType, task.Args)
 	status := "succeeded"
 	msg := ""
@@ -103,7 +112,11 @@ func executeAndReport(client *agentapi.Client, s *state.State, task agentapi.Tas
 		msg = err.Error()
 	}
 	if sendErr := client.SendTaskResult(s.AgentID, s.AgentToken, task.TaskID, status, result, msg); sendErr != nil {
-		log.Printf("task result upload failed task_id=%s: %v", task.TaskID, sendErr)
+		if spoolErr := spool.AppendTaskResult(spoolPath, task.TaskID, status, result, msg); spoolErr != nil {
+			log.Printf("task result upload failed task_id=%s: %v; spool failed: %v", task.TaskID, sendErr, spoolErr)
+			return
+		}
+		log.Printf("task result upload failed task_id=%s, spooled: %v", task.TaskID, sendErr)
 	}
 }
 
@@ -113,4 +126,12 @@ func defaultStatePath() string {
 		base = "."
 	}
 	return filepath.Join(base, "open-edr-mdr-agent", "agent-state.json")
+}
+
+func defaultSpoolPath() string {
+	base, err := os.UserConfigDir()
+	if err != nil {
+		base = "."
+	}
+	return filepath.Join(base, "open-edr-mdr-agent", "spool.jsonl")
 }
