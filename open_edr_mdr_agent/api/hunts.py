@@ -15,6 +15,14 @@ class HuntCreateRequest(BaseModel):
     enabled: bool = True
 
 
+class HuntUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    indicator: Optional[str] = None
+    query: Optional[Dict[str, Any]] = None
+    enabled: Optional[bool] = None
+
+
 class HuntRecord(BaseModel):
     hunt_id: str
     tenant_id: str

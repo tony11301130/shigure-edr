@@ -9,7 +9,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from open_edr_mdr_agent.api.cases import CaseCreateRequest, CaseEvidenceRecord, CaseEvidenceRequest, CaseRecord, CaseUpdateRequest
-from open_edr_mdr_agent.api.hunts import HuntCreateRequest, HuntRecord, HuntRunRecord
+from open_edr_mdr_agent.api.hunts import HuntCreateRequest, HuntRecord, HuntRunRecord, HuntUpdateRequest
 from open_edr_mdr_agent.api.models import (
     AgentConfig,
     AgentRecord,
@@ -227,11 +227,23 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
     def list_saved_hunts(tenant_id: str = Query("default"), enabled: Optional[bool] = None, limit: int = 100, _admin=Depends(_admin_auth)):
         return store.list_hunts(tenant_id, enabled=enabled, limit=limit)
 
+    @app.patch("/api/v1/admin/hunts/{hunt_id}", response_model=HuntRecord)
+    def update_saved_hunt(hunt_id: str, req: HuntUpdateRequest, tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):
+        try:
+            hunt = store.update_hunt(tenant_id, hunt_id, name=req.name, description=req.description, indicator=req.indicator, query=req.query, enabled=req.enabled)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not hunt:
+            raise HTTPException(status_code=404, detail="hunt_not_found")
+        return hunt
+
     @app.post("/api/v1/admin/hunts/{hunt_id}/run", response_model=HuntRunRecord)
     def run_saved_hunt(hunt_id: str, tenant_id: str = Query("default"), limit: int = 100, _admin=Depends(_admin_auth)):
         hunt = store.get_hunt(tenant_id, hunt_id)
         if not hunt:
             raise HTTPException(status_code=404, detail="hunt_not_found")
+        if not hunt.enabled:
+            raise HTTPException(status_code=400, detail="hunt_disabled")
         query = hunt.query or {}
         indicator = hunt.indicator or query.get("indicator")
         events = store.list_events(

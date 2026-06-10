@@ -466,6 +466,41 @@ class SQLiteStore:
             row = conn.execute("select * from hunts where tenant_id=? and hunt_id=?", (tenant_id, hunt_id)).fetchone()
         return self._hunt_record(dict(row)) if row else None
 
+    def update_hunt(
+        self,
+        tenant_id: str,
+        hunt_id: str,
+        *,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        indicator: Optional[str] = None,
+        query: Optional[Dict[str, Any]] = None,
+        enabled: Optional[bool] = None,
+    ) -> Optional[HuntRecord]:
+        current = self.get_hunt(tenant_id, hunt_id)
+        if not current:
+            return None
+        next_indicator = current.indicator if indicator is None else indicator
+        next_query = current.query if query is None else query
+        if not next_indicator and not next_query:
+            raise ValueError("indicator_or_query_required")
+        with self.connect() as conn:
+            conn.execute(
+                """
+                update hunts
+                set name=coalesce(?, name),
+                    description=coalesce(?, description),
+                    indicator=?,
+                    query_json=?,
+                    enabled=coalesce(?, enabled),
+                    updated_at=?
+                where tenant_id=? and hunt_id=?
+                """,
+                (name, description, next_indicator, json.dumps(next_query or {}), None if enabled is None else (1 if enabled else 0), utc_now(), tenant_id, hunt_id),
+            )
+            row = conn.execute("select * from hunts where tenant_id=? and hunt_id=?", (tenant_id, hunt_id)).fetchone()
+        return self._hunt_record(dict(row))
+
     def record_hunt_run(self, tenant_id: str, hunt_id: str, status: str, result: Dict[str, Any]) -> HuntRunRecord:
         run_id = str(uuid4())
         now = utc_now()
