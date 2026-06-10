@@ -51,3 +51,4 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 - 2026-06-10: Added agent health/telemetry gap detection maintenance API and test.
 - 2026-06-10: Added automated M0 smoke script. Latest run: 11 events ingested, suspicious PowerShell alert generated, file_exists task succeeded.
 - 2026-06-10: Added dev admin token protection for admin/MDR APIs; updated tests and smoke script.
+- 2026-06-10: Added `open-edr-mdr-agent serve` CLI command and README quick-start notes.

@@ -19,6 +19,16 @@ def provider(data_dir: str = "./sample-data") -> CompositeEndpointProvider:
 
 
 @app.command()
+def serve(host: str = "127.0.0.1", port: int = 8000, db: str = "/tmp/open-edr-mdr-agent.sqlite3"):
+    """Run the M0 backend API server."""
+    import os
+    import uvicorn
+
+    os.environ["OPEN_EDR_MDR_DB"] = db
+    uvicorn.run("open_edr_mdr_agent.api.app:app", host=host, port=port, reload=False)
+
+
+@app.command()
 def alerts(data_dir: str = "./sample-data", limit: int = 20):
     """List normalized alerts."""
     rows = provider(data_dir).list_alerts(limit=limit)

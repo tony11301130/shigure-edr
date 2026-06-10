@@ -57,6 +57,18 @@ open-edr-mdr-agent trace-process-chain --host POS01 --process-id 4242
 open-edr-mdr-agent hunt powershell
 ```
 
+Run the M0 backend:
+
+```bash
+open-edr-mdr-agent serve --host 127.0.0.1 --port 8765 --db /tmp/open-edr-mdr.sqlite3
+```
+
+Run the automated M0 backend+agent smoke test:
+
+```bash
+scripts/m0_smoke.sh
+```
+
 If you do not want a venv, you can also run with `PYTHONPATH=.`:
 
 ```bash
