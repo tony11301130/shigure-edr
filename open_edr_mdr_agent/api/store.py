@@ -172,6 +172,7 @@ class SQLiteStore:
 
     def set_agent_config(self, tenant_id: str, config: AgentConfig) -> AgentConfig:
         current = self.get_agent_config(tenant_id)
+        config.features = {"collector_gates_explicit": True, **(config.features or {})}
         if config.version <= current.version:
             config.version = current.version + 1
         with self.connect() as conn:

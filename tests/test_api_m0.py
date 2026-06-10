@@ -19,7 +19,7 @@ def test_m0_enroll_ingest_detect_task_loop(tmp_path):
     agent_id = auth["agent_id"]
     headers = {"Authorization": f"Bearer {auth['agent_token']}"}
 
-    config_update = client.put("/api/v1/admin/config?tenant_id=default", headers={"Authorization":"Bearer dev-admin-token"}, json={"version": 1, "task_poll_seconds": 7, "heartbeat_seconds": 30, "upload_interval_seconds": 15, "max_snapshot_events": 3, "collect_snapshot": True, "demo_suspicious_event": False, "features": {"windows_etw": False}})
+    config_update = client.put("/api/v1/admin/config?tenant_id=default", headers={"Authorization":"Bearer dev-admin-token"}, json={"version": 1, "task_poll_seconds": 7, "heartbeat_seconds": 30, "upload_interval_seconds": 15, "max_snapshot_events": 3, "collect_snapshot": True, "collect_process_snapshot": True, "collect_network_snapshot": False, "collect_windows_event_logs": True, "demo_suspicious_event": False, "features": {"windows_etw": False}})
     assert config_update.status_code == 200
     assert config_update.json()["version"] >= 2
 
@@ -28,6 +28,8 @@ def test_m0_enroll_ingest_detect_task_loop(tmp_path):
     assert hb.json()["status"] == "ok"
     assert hb.json()["config"]["task_poll_seconds"] == 7
     assert hb.json()["config"]["max_snapshot_events"] == 3
+    assert hb.json()["config"]["collect_network_snapshot"] is False
+    assert hb.json()["config"]["features"]["collector_gates_explicit"] is True
 
     event = {
         "source": "internal",

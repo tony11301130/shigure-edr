@@ -64,7 +64,7 @@ func main() {
 		log.Printf("enrolled agent_id=%s tenant_id=%s", agentState.AgentID, agentState.TenantID)
 	}
 
-	runtimeConfig := agentapi.AgentConfig{TaskPollSeconds: int(interval.Seconds()), HeartbeatSeconds: int(interval.Seconds()), UploadIntervalSeconds: int(interval.Seconds()), MaxSnapshotEvents: *maxSnapshotEvents, CollectSnapshot: *collectSnapshot, DemoSuspiciousEvent: *demoEvent}
+	runtimeConfig := agentapi.AgentConfig{TaskPollSeconds: int(interval.Seconds()), HeartbeatSeconds: int(interval.Seconds()), UploadIntervalSeconds: int(interval.Seconds()), MaxSnapshotEvents: *maxSnapshotEvents, CollectSnapshot: *collectSnapshot, CollectProcessSnapshot: true, CollectNetworkSnapshot: true, CollectWindowsEventLogs: true, DemoSuspiciousEvent: *demoEvent}
 	for {
 		newConfig, err := runCycle(client, agentState, *spoolPath, runtimeConfig)
 		if err != nil {
@@ -111,7 +111,7 @@ func runCycle(client *agentapi.Client, s *state.State, spoolPath string, cfg age
 
 	events := []agentapi.NormalizedEvent{}
 	if cfg.CollectSnapshot {
-		events = append(events, collect.SnapshotTelemetry(s.TenantID, cfg.MaxSnapshotEvents)...)
+		events = append(events, collect.SnapshotTelemetryWithOptions(s.TenantID, cfg.MaxSnapshotEvents, collect.TelemetryOptions{CollectProcessSnapshot: cfg.CollectProcessSnapshot, CollectNetworkSnapshot: cfg.CollectNetworkSnapshot, CollectWindowsEventLogs: cfg.CollectWindowsEventLogs})...)
 	}
 	if cfg.DemoSuspiciousEvent {
 		events = append(events, collect.DemoSuspiciousPowerShellEvent(s.TenantID))
@@ -148,6 +148,12 @@ func mergeCLIOverrides(cfg agentapi.AgentConfig, forceDemo bool, fallbackMaxSnap
 	}
 	if cfg.MaxSnapshotEvents <= 0 {
 		cfg.MaxSnapshotEvents = fallbackMaxSnapshotEvents
+	}
+	// Older configs may predate per-collector gates. Keep existing deploys collecting by default.
+	if cfg.Features == nil || cfg.Features["collector_gates_explicit"] != true {
+		cfg.CollectProcessSnapshot = true
+		cfg.CollectNetworkSnapshot = true
+		cfg.CollectWindowsEventLogs = true
 	}
 	if forceDemo {
 		cfg.DemoSuspiciousEvent = true

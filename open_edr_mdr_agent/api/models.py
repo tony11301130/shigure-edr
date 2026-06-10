@@ -41,8 +41,11 @@ class AgentConfig(BaseModel):
     upload_interval_seconds: int = 15
     max_snapshot_events: int = 25
     collect_snapshot: bool = True
+    collect_process_snapshot: bool = True
+    collect_network_snapshot: bool = True
+    collect_windows_event_logs: bool = True
     demo_suspicious_event: bool = False
-    features: Dict[str, Any] = Field(default_factory=dict)
+    features: Dict[str, Any] = Field(default_factory=lambda: {"collector_gates_explicit": True})
 
 
 class HeartbeatResponse(BaseModel):

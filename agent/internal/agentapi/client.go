@@ -56,14 +56,17 @@ type NormalizedEvent struct {
 }
 
 type AgentConfig struct {
-	Version               int            `json:"version"`
-	TaskPollSeconds       int            `json:"task_poll_seconds"`
-	HeartbeatSeconds      int            `json:"heartbeat_seconds"`
-	UploadIntervalSeconds int            `json:"upload_interval_seconds"`
-	MaxSnapshotEvents     int            `json:"max_snapshot_events"`
-	CollectSnapshot       bool           `json:"collect_snapshot"`
-	DemoSuspiciousEvent   bool           `json:"demo_suspicious_event"`
-	Features              map[string]any `json:"features"`
+	Version                 int            `json:"version"`
+	TaskPollSeconds         int            `json:"task_poll_seconds"`
+	HeartbeatSeconds        int            `json:"heartbeat_seconds"`
+	UploadIntervalSeconds   int            `json:"upload_interval_seconds"`
+	MaxSnapshotEvents       int            `json:"max_snapshot_events"`
+	CollectSnapshot         bool           `json:"collect_snapshot"`
+	CollectProcessSnapshot  bool           `json:"collect_process_snapshot"`
+	CollectNetworkSnapshot  bool           `json:"collect_network_snapshot"`
+	CollectWindowsEventLogs bool           `json:"collect_windows_event_logs"`
+	DemoSuspiciousEvent     bool           `json:"demo_suspicious_event"`
+	Features                map[string]any `json:"features"`
 }
 
 type HeartbeatResponse struct {
