@@ -39,6 +39,7 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 | M1.1 | Raw evidence/schema hardening | Done | Normalized events/alerts include raw_ref/raw_hash; SQLite raw_evidence store/API added |
 | M1.2 | Detection rule loader | Done | YAML rule loader with equals/contains/regex conditions; backend can load/reload custom rules |
 | M1.3 | MDR case/evidence workflow | Done | Cases can be created from alerts, updated, and linked to event/task/raw evidence refs |
+| M1.4 | Load simulator | Done | `scripts/load_sim.py` simulates enrollment/heartbeat/ingest/detection; small local run validated |
 
 ## Work log
 
@@ -61,3 +62,4 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 - 2026-06-10: Added raw evidence hashing/reference fields and SQLite raw_evidence API. Events/alerts now carry `raw_ref` and `raw_hash`; tests and smoke pass.
 - 2026-06-10: Added YAML detection rule loader and custom rule execution path. Example rule file added; tests and smoke pass.
 - 2026-06-10: Added MDR case/evidence SQLite tables and APIs. Tests cover alert-to-case, evidence attachment, and case update workflow.
+- 2026-06-10: Added load simulator and docs. Local validation: 25 agents, 50 events, 25 alerts in ~0.7s.
