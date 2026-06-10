@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Optional
 
@@ -22,7 +23,7 @@ from open_edr_mdr_agent.api.models import (
 )
 from open_edr_mdr_agent.api.store import SQLiteStore
 from open_edr_mdr_agent.core.detection import detect_many
-from open_edr_mdr_agent.core.schemas import Alert, NormalizedEvent
+from open_edr_mdr_agent.core.schemas import Alert, NormalizedEvent, Severity, Source
 
 DEFAULT_DB = os.environ.get("OPEN_EDR_MDR_DB", "/tmp/open-edr-mdr-agent.sqlite3")
 DEFAULT_DEV_TOKEN = os.environ.get("OPEN_EDR_MDR_DEV_ENROLLMENT_TOKEN", "dev-token")
@@ -129,6 +130,26 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
     @app.post("/api/v1/admin/enrollment-tokens")
     def create_enrollment_token(tenant_id: str = "default", max_uses: Optional[int] = None):
         return {"tenant_id": tenant_id, "token": store.create_enrollment_token(tenant_id, max_uses=max_uses)}
+
+    @app.post("/api/v1/admin/detections/agent-health")
+    def run_agent_health_detection(tenant_id: Optional[str] = None, stale_after_seconds: int = 300):
+        stale_before = (datetime.now(timezone.utc) - timedelta(seconds=stale_after_seconds)).isoformat()
+        alerts = []
+        for agent_row in store.stale_agents(stale_before, tenant_id=tenant_id):
+            alert = Alert(
+                alert_id=f"builtin.agent.offline:{agent_row['agent_id']}:{agent_row.get('last_seen')}",
+                title="Agent offline or telemetry gap",
+                severity=Severity.MEDIUM,
+                timestamp=datetime.now(timezone.utc),
+                host=agent_row.get("host"),
+                description=f"Agent {agent_row['agent_id']} last seen at {agent_row.get('last_seen')}",
+                mitre=[],
+                source=Source.INTERNAL,
+                raw={"rule_id": "builtin.agent.offline", "tenant_id": agent_row["tenant_id"], "agent_id": agent_row["agent_id"], "last_seen": agent_row.get("last_seen")},
+            )
+            alerts.append(alert)
+        inserted = store.insert_alerts(alerts)
+        return {"stale_agents": len(alerts), "alerts_generated": inserted}
 
     app.dependency_overrides[_agent_auth] = _make_agent_auth(app)
     return app

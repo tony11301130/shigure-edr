@@ -252,6 +252,15 @@ class SQLiteStore:
         with self.connect() as conn:
             return [Alert.model_validate_json(r["alert_json"]) for r in conn.execute("select alert_json from alerts where tenant_id=? order by timestamp desc limit ?", (tenant_id, limit)).fetchall()]
 
+    def stale_agents(self, stale_before_iso: str, tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        q = "select * from agents where last_seen < ?"
+        args: list[Any] = [stale_before_iso]
+        if tenant_id:
+            q += " and tenant_id=?"
+            args.append(tenant_id)
+        with self.connect() as conn:
+            return [dict(r) for r in conn.execute(q, args).fetchall()]
+
     def pending_tasks_count(self, tenant_id: str, agent_id: str) -> int:
         with self.connect() as conn:
             row = conn.execute("select count(*) c from tasks where tenant_id=? and agent_id=? and status='queued'", (tenant_id, agent_id)).fetchone()

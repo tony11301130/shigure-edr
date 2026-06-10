@@ -32,7 +32,7 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 | M0.2 | Go agent skeleton | Done | Go loop supports enrollment, heartbeat, demo telemetry upload, offline spool, task polling |
 | M0.3 | Read-only task execution | Partial | inventory, process_list, network_connections, service_list, scheduled_tasks, file_exists, file_hash implemented; Windows-native API depth pending |
 | M0.4 | Minimal telemetry collectors | Partial | Cross-platform snapshot collector sends process command line/parent PID and basic network snapshot; Windows ETW/Event Log collectors pending |
-| M0.5 | Server-side detection | Partial | Built-in tests for encoded PowerShell, script+network, service/task, IOC; telemetry gap pending |
+| M0.5 | Server-side detection | Done for M0 | Built-in tests for encoded PowerShell, script+network, service/task, IOC, and agent telemetry gap |
 | M0.6 | MDR query/evidence workflow | Partial | Admin APIs list agents/events/alerts/tasks; event filters include host/type/process/remote_ip/domain/indicator |
 | M0.7 | Local integration smoke test | Pending | one simulated/real agent end-to-end |
 
@@ -48,3 +48,4 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 - 2026-06-10: Added MDR query filters for events and task list endpoint; tests cover indicator hunt, process query, and task result evidence.
 - 2026-06-10: Expanded read-only task catalog with `service_list` and `scheduled_tasks` safe collectors.
 - 2026-06-10: Added detection tests and built-in rules for encoded PowerShell, script interpreter network connection, service/task persistence command, and safe smoke-test IOC match.
+- 2026-06-10: Added agent health/telemetry gap detection maintenance API and test.
