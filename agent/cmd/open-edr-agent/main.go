@@ -26,6 +26,8 @@ func main() {
 	spoolPath := flag.String("spool", defaultSpoolPath(), "offline spool JSONL path")
 	once := flag.Bool("once", false, "run one heartbeat/telemetry/task cycle then exit")
 	demoEvent := flag.Bool("demo-suspicious-event", false, "send a demo suspicious PowerShell event for detection smoke test")
+	collectSnapshot := flag.Bool("collect-snapshot", true, "send limited process/network telemetry snapshot each cycle")
+	maxSnapshotEvents := flag.Int("max-snapshot-events", 25, "maximum snapshot telemetry events per cycle")
 	interval := flag.Duration("interval", 15*time.Second, "loop interval")
 	flag.Parse()
 
@@ -44,7 +46,7 @@ func main() {
 	}
 
 	for {
-		if err := runCycle(client, agentState, *spoolPath, *demoEvent); err != nil {
+		if err := runCycle(client, agentState, *spoolPath, *demoEvent, *collectSnapshot, *maxSnapshotEvents); err != nil {
 			log.Printf("cycle error: %v", err)
 		}
 		if *once {
@@ -66,7 +68,7 @@ func enroll(client *agentapi.Client, token string) (*state.State, error) {
 	return &state.State{TenantID: res.TenantID, AgentID: res.AgentID, AgentToken: res.AgentToken}, nil
 }
 
-func runCycle(client *agentapi.Client, s *state.State, spoolPath string, sendDemo bool) error {
+func runCycle(client *agentapi.Client, s *state.State, spoolPath string, sendDemo bool, collectSnapshot bool, maxSnapshotEvents int) error {
 	if err := spool.Flush(spoolPath, client, s); err != nil {
 		log.Printf("spool flush failed: %v", err)
 	}
@@ -79,11 +81,17 @@ func runCycle(client *agentapi.Client, s *state.State, spoolPath string, sendDem
 		log.Printf("heartbeat failed, continuing so telemetry can spool if needed: %v", err)
 	}
 
+	events := []agentapi.NormalizedEvent{}
+	if collectSnapshot {
+		events = append(events, collect.SnapshotTelemetry(s.TenantID, maxSnapshotEvents)...)
+	}
 	if sendDemo {
-		events := []agentapi.NormalizedEvent{collect.DemoSuspiciousPowerShellEvent(s.TenantID)}
+		events = append(events, collect.DemoSuspiciousPowerShellEvent(s.TenantID))
+	}
+	if len(events) > 0 {
 		if err := client.IngestEvents(s.AgentID, s.AgentToken, events); err != nil {
 			if spoolErr := spool.AppendEvents(spoolPath, events); spoolErr != nil {
-				return fmt.Errorf("ingest demo event: %w; spool failed: %v", err, spoolErr)
+				return fmt.Errorf("ingest events: %w; spool failed: %v", err, spoolErr)
 			}
 			log.Printf("ingest failed, events spooled: %v", err)
 		}
