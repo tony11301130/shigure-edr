@@ -34,7 +34,7 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 | M0.4 | Minimal telemetry collectors | Partial | Cross-platform snapshot collector sends process command line/parent PID and basic network snapshot; Windows ETW/Event Log collectors pending |
 | M0.5 | Server-side detection | Done for M0 | Built-in tests for encoded PowerShell, script+network, service/task, IOC, and agent telemetry gap |
 | M0.6 | MDR query/evidence workflow | Partial | Admin APIs list agents/events/alerts/tasks; event filters include host/type/process/remote_ip/domain/indicator |
-| M0.7 | Local integration smoke test | Pending | one simulated/real agent end-to-end |
+| M0.7 | Local integration smoke test | Done | `scripts/m0_smoke.sh` validates backend + Go agent E2E |
 
 ## Work log
 
@@ -49,3 +49,4 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 - 2026-06-10: Expanded read-only task catalog with `service_list` and `scheduled_tasks` safe collectors.
 - 2026-06-10: Added detection tests and built-in rules for encoded PowerShell, script interpreter network connection, service/task persistence command, and safe smoke-test IOC match.
 - 2026-06-10: Added agent health/telemetry gap detection maintenance API and test.
+- 2026-06-10: Added automated M0 smoke script. Latest run: 11 events ingested, suspicious PowerShell alert generated, file_exists task succeeded.
