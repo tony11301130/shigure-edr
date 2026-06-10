@@ -19,6 +19,10 @@ def test_alert_list_filters_by_severity_and_host(tmp_path):
     assert len(hit.json()) == 1
     assert hit.json()[0]["title"] == "Suspicious encoded PowerShell command"
 
+    by_title = client.get("/api/v1/admin/alerts", headers=ADMIN, params={"tenant_id": "default", "title": "encoded PowerShell"})
+    assert by_title.status_code == 200
+    assert len(by_title.json()) == 1
+
     miss = client.get("/api/v1/admin/alerts", headers=ADMIN, params={"tenant_id": "default", "severity": "critical", "host": "ALERT01"})
     assert miss.status_code == 200
     assert miss.json() == []

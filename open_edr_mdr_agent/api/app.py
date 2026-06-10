@@ -214,8 +214,8 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
         return alert
 
     @app.get("/api/v1/admin/alerts", response_model=list[Alert])
-    def list_alerts(tenant_id: str = Query("default"), limit: int = 100, severity: Optional[str] = None, host: Optional[str] = None, _admin=Depends(_admin_auth)):
-        return store.list_alerts(tenant_id, limit=limit, severity=severity, host=host)
+    def list_alerts(tenant_id: str = Query("default"), limit: int = 100, severity: Optional[str] = None, host: Optional[str] = None, title: Optional[str] = None, _admin=Depends(_admin_auth)):
+        return store.list_alerts(tenant_id, limit=limit, severity=severity, host=host, title=title)
 
     @app.get("/api/v1/admin/raw-evidence")
     def get_raw_evidence(raw_ref: str, tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):

@@ -663,7 +663,7 @@ class SQLiteStore:
             row = conn.execute("select * from tasks where tenant_id=? and task_id=?", (tenant_id, task_id)).fetchone()
         return self._task_record(dict(row)) if row else None
 
-    def list_alerts(self, tenant_id: str, limit: int = 100, severity: Optional[str] = None, host: Optional[str] = None) -> List[Alert]:
+    def list_alerts(self, tenant_id: str, limit: int = 100, severity: Optional[str] = None, host: Optional[str] = None, title: Optional[str] = None) -> List[Alert]:
         q = "select alert_json from alerts where tenant_id=?"
         args: list[Any] = [tenant_id]
         if severity:
@@ -672,6 +672,9 @@ class SQLiteStore:
         if host:
             q += " and host=?"
             args.append(host)
+        if title:
+            q += " and title like ?"
+            args.append(f"%{title}%")
         q += " order by timestamp desc limit ?"
         args.append(limit)
         with self.connect() as conn:
