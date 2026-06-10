@@ -73,6 +73,10 @@ func platformNetworkSnapshot(tenantID string, max int) []agentapi.NormalizedEven
 	return out
 }
 
+func platformEventLogSnapshot(tenantID string, max int) []agentapi.NormalizedEvent {
+	return nil
+}
+
 func parsePPID(stat string) string {
 	idx := strings.LastIndex(stat, ")")
 	if idx == -1 || len(stat) <= idx+4 {

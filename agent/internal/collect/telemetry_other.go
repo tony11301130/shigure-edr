@@ -19,3 +19,7 @@ func platformProcessSnapshot(tenantID string, max int) []agentapi.NormalizedEven
 func platformNetworkSnapshot(tenantID string, max int) []agentapi.NormalizedEvent {
 	return nil
 }
+
+func platformEventLogSnapshot(tenantID string, max int) []agentapi.NormalizedEvent {
+	return nil
+}

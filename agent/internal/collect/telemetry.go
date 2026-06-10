@@ -11,6 +11,9 @@ func SnapshotTelemetry(tenantID string, maxEvents int) []agentapi.NormalizedEven
 	if len(events) < maxEvents {
 		events = append(events, platformNetworkSnapshot(tenantID, maxEvents-len(events))...)
 	}
+	if len(events) < maxEvents {
+		events = append(events, platformEventLogSnapshot(tenantID, maxEvents-len(events))...)
+	}
 	if len(events) > maxEvents {
 		return events[:maxEvents]
 	}

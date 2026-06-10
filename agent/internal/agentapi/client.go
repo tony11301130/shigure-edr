@@ -39,15 +39,19 @@ type NormalizedEvent struct {
 	Source          string         `json:"source"`
 	EventType       string         `json:"event_type"`
 	TenantID        string         `json:"tenant_id"`
+	SourceEventID   string         `json:"source_event_id,omitempty"`
 	Host            string         `json:"host,omitempty"`
 	User            string         `json:"user,omitempty"`
 	ProcessName     string         `json:"process_name,omitempty"`
 	ProcessID       string         `json:"process_id,omitempty"`
 	ParentProcessID string         `json:"parent_process_id,omitempty"`
 	CommandLine     string         `json:"command_line,omitempty"`
+	FilePath        string         `json:"file_path,omitempty"`
+	Domain          string         `json:"domain,omitempty"`
 	RemoteIP        string         `json:"remote_ip,omitempty"`
 	RemotePort      *int           `json:"remote_port,omitempty"`
 	Severity        string         `json:"severity"`
+	Mitre           []string       `json:"mitre,omitempty"`
 	Raw             map[string]any `json:"raw"`
 }
 
