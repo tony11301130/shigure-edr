@@ -11,6 +11,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from uuid import uuid4
 
 from open_edr_mdr_agent.api.cases import CaseEvidenceRecord, CaseRecord
+from open_edr_mdr_agent.api.hunts import HuntRecord, HuntRunRecord
 from open_edr_mdr_agent.api.models import AgentConfig, AgentRecord, TaskRecord
 from open_edr_mdr_agent.core.schemas import Alert, NormalizedEvent
 
@@ -130,6 +131,27 @@ class SQLiteStore:
                     created_at text not null
                 );
                 create index if not exists idx_case_evidence_case on case_evidence(tenant_id, case_id, created_at);
+                create table if not exists hunts (
+                    hunt_id text primary key,
+                    tenant_id text not null,
+                    name text not null,
+                    description text,
+                    indicator text,
+                    query_json text not null,
+                    enabled integer not null,
+                    created_at text not null,
+                    updated_at text not null
+                );
+                create index if not exists idx_hunts_tenant on hunts(tenant_id, enabled, updated_at);
+                create table if not exists hunt_runs (
+                    run_id text primary key,
+                    hunt_id text not null,
+                    tenant_id text not null,
+                    status text not null,
+                    result_json text not null,
+                    created_at text not null
+                );
+                create index if not exists idx_hunt_runs_tenant on hunt_runs(tenant_id, hunt_id, created_at);
                 create table if not exists tenant_configs (
                     tenant_id text primary key,
                     version integer not null,
@@ -417,6 +439,55 @@ class SQLiteStore:
             row = conn.execute("select * from cases where case_id=?", (case_id,)).fetchone()
         return self._case_record(dict(row))
 
+    def create_hunt(self, tenant_id: str, name: str, description: Optional[str], indicator: Optional[str], query: Dict[str, Any], enabled: bool = True) -> HuntRecord:
+        hunt_id = str(uuid4())
+        now = utc_now()
+        with self.connect() as conn:
+            conn.execute(
+                "insert into hunts(hunt_id, tenant_id, name, description, indicator, query_json, enabled, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (hunt_id, tenant_id, name, description, indicator, json.dumps(query or {}), 1 if enabled else 0, now, now),
+            )
+            row = conn.execute("select * from hunts where hunt_id=?", (hunt_id,)).fetchone()
+        return self._hunt_record(dict(row))
+
+    def list_hunts(self, tenant_id: str, enabled: Optional[bool] = None, limit: int = 100) -> List[HuntRecord]:
+        q = "select * from hunts where tenant_id=?"
+        args: list[Any] = [tenant_id]
+        if enabled is not None:
+            q += " and enabled=?"
+            args.append(1 if enabled else 0)
+        q += " order by updated_at desc limit ?"
+        args.append(limit)
+        with self.connect() as conn:
+            return [self._hunt_record(dict(r)) for r in conn.execute(q, args).fetchall()]
+
+    def get_hunt(self, tenant_id: str, hunt_id: str) -> Optional[HuntRecord]:
+        with self.connect() as conn:
+            row = conn.execute("select * from hunts where tenant_id=? and hunt_id=?", (tenant_id, hunt_id)).fetchone()
+        return self._hunt_record(dict(row)) if row else None
+
+    def record_hunt_run(self, tenant_id: str, hunt_id: str, status: str, result: Dict[str, Any]) -> HuntRunRecord:
+        run_id = str(uuid4())
+        now = utc_now()
+        with self.connect() as conn:
+            conn.execute(
+                "insert into hunt_runs(run_id, hunt_id, tenant_id, status, result_json, created_at) values (?, ?, ?, ?, ?, ?)",
+                (run_id, hunt_id, tenant_id, status, json.dumps(result, default=str), now),
+            )
+            row = conn.execute("select * from hunt_runs where run_id=?", (run_id,)).fetchone()
+        return self._hunt_run_record(dict(row))
+
+    def list_hunt_runs(self, tenant_id: str, hunt_id: Optional[str] = None, limit: int = 100) -> List[HuntRunRecord]:
+        q = "select * from hunt_runs where tenant_id=?"
+        args: list[Any] = [tenant_id]
+        if hunt_id:
+            q += " and hunt_id=?"
+            args.append(hunt_id)
+        q += " order by created_at desc limit ?"
+        args.append(limit)
+        with self.connect() as conn:
+            return [self._hunt_run_record(dict(r)) for r in conn.execute(q, args).fetchall()]
+
     def list_cases(self, tenant_id: str, status: Optional[str] = None, limit: int = 100) -> List[CaseRecord]:
         q = "select * from cases where tenant_id=?"
         args: list[Any] = [tenant_id]
@@ -522,6 +593,19 @@ class SQLiteStore:
             q += " and event_json like ?"
             args.append(f"%{indicator}%")
         return q, args
+
+    def _hunt_record(self, row: Dict[str, Any]) -> HuntRecord:
+        return HuntRecord(
+            hunt_id=row["hunt_id"], tenant_id=row["tenant_id"], name=row["name"], description=row.get("description"),
+            indicator=row.get("indicator"), query=json.loads(row["query_json"] or "{}"), enabled=bool(row["enabled"]),
+            created_at=datetime.fromisoformat(row["created_at"]), updated_at=datetime.fromisoformat(row["updated_at"]),
+        )
+
+    def _hunt_run_record(self, row: Dict[str, Any]) -> HuntRunRecord:
+        return HuntRunRecord(
+            run_id=row["run_id"], hunt_id=row["hunt_id"], tenant_id=row["tenant_id"], status=row["status"],
+            result=json.loads(row["result_json"] or "{}"), created_at=datetime.fromisoformat(row["created_at"]),
+        )
 
     def _case_record(self, row: Dict[str, Any]) -> CaseRecord:
         return CaseRecord(

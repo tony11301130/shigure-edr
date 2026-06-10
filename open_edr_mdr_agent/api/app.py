@@ -9,6 +9,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from open_edr_mdr_agent.api.cases import CaseCreateRequest, CaseEvidenceRecord, CaseEvidenceRequest, CaseRecord, CaseUpdateRequest
+from open_edr_mdr_agent.api.hunts import HuntCreateRequest, HuntRecord, HuntRunRecord
 from open_edr_mdr_agent.api.models import (
     AgentConfig,
     AgentRecord,
@@ -215,6 +216,46 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
         alerts = [a for a in store.list_alerts(tenant_id, limit=limit) if indicator.lower() in a.model_dump_json().lower()]
         hosts = sorted({e.host for e in events if e.host} | {a.host for a in alerts if a.host})
         return {"tenant_id": tenant_id, "indicator": indicator, "hosts": hosts, "events": events, "alerts": alerts[:limit]}
+
+    @app.post("/api/v1/admin/hunts", response_model=HuntRecord)
+    def create_saved_hunt(req: HuntCreateRequest, _admin=Depends(_admin_auth)):
+        if not req.indicator and not req.query:
+            raise HTTPException(status_code=400, detail="indicator_or_query_required")
+        return store.create_hunt(req.tenant_id, req.name, req.description, req.indicator, req.query, enabled=req.enabled)
+
+    @app.get("/api/v1/admin/hunts", response_model=list[HuntRecord])
+    def list_saved_hunts(tenant_id: str = Query("default"), enabled: Optional[bool] = None, limit: int = 100, _admin=Depends(_admin_auth)):
+        return store.list_hunts(tenant_id, enabled=enabled, limit=limit)
+
+    @app.post("/api/v1/admin/hunts/{hunt_id}/run", response_model=HuntRunRecord)
+    def run_saved_hunt(hunt_id: str, tenant_id: str = Query("default"), limit: int = 100, _admin=Depends(_admin_auth)):
+        hunt = store.get_hunt(tenant_id, hunt_id)
+        if not hunt:
+            raise HTTPException(status_code=404, detail="hunt_not_found")
+        query = hunt.query or {}
+        indicator = hunt.indicator or query.get("indicator")
+        events = store.list_events(
+            tenant_id,
+            host=query.get("host"),
+            event_type=query.get("event_type"),
+            process_name=query.get("process_name"),
+            remote_ip=query.get("remote_ip"),
+            domain=query.get("domain"),
+            indicator=indicator,
+            limit=limit,
+        )
+        alerts = []
+        if indicator:
+            alerts = [a for a in store.list_alerts(tenant_id, limit=limit) if str(indicator).lower() in a.model_dump_json().lower()]
+        hosts = sorted({e.host for e in events if e.host} | {a.host for a in alerts if a.host})
+        result = {"hunt_id": hunt_id, "name": hunt.name, "indicator": indicator, "query": query, "hosts": hosts, "event_count": len(events), "alert_count": len(alerts), "events": [e.model_dump(mode="json") for e in events[:limit]], "alerts": [a.model_dump(mode="json") for a in alerts[:limit]]}
+        return store.record_hunt_run(tenant_id, hunt_id, "succeeded", result)
+
+    @app.get("/api/v1/admin/hunts/{hunt_id}/runs", response_model=list[HuntRunRecord])
+    def list_saved_hunt_runs(hunt_id: str, tenant_id: str = Query("default"), limit: int = 100, _admin=Depends(_admin_auth)):
+        if not store.get_hunt(tenant_id, hunt_id):
+            raise HTTPException(status_code=404, detail="hunt_not_found")
+        return store.list_hunt_runs(tenant_id, hunt_id=hunt_id, limit=limit)
 
     @app.get("/api/v1/admin/investigate/process-chain")
     def process_chain(host: str, process_id: str, tenant_id: str = Query("default"), limit: int = 500, _admin=Depends(_admin_auth)):
