@@ -68,6 +68,7 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 | M1.30 | UI hunt/evidence panels | Done | Minimal intranet UI now surfaces saved hunts and raw evidence references alongside cases/tasks |
 | M1.31 | Intranet deployment runbook | Done | Added V1 deployment checklist for server, Windows agent, analyst validation, and safety boundaries |
 | M1.32 | Alert severity/host filters | Done | Alert listing supports tenant-scoped severity and host filters for triage queues |
+| M1.33 | Task status filter | Done | Task listing supports status filters for queued/claimed/succeeded/timed_out analyst views |
 
 ## Work log
 
@@ -119,3 +120,4 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 - 2026-06-10: Added saved hunt and raw evidence reference panels to the minimal intranet UI. Tests, Windows cross-build, and smoke pass.
 - 2026-06-10: Added intranet V1 deployment runbook covering server startup, Windows agent service install, validation checks, and read-only response boundaries. Tests, Windows cross-build, and smoke pass.
 - 2026-06-10: Added alert severity and host filters for MDR triage queues. Tests, Windows cross-build, and smoke pass.
+- 2026-06-10: Added task status filter for queued/claimed/completed/timed_out task views. Tests, Windows cross-build, and smoke pass.

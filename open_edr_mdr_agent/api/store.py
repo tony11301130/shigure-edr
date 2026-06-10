@@ -621,12 +621,15 @@ class SQLiteStore:
         with self.connect() as conn:
             return [dict(row) for row in conn.execute(q, args).fetchall()]
 
-    def list_tasks(self, tenant_id: str, agent_id: Optional[str] = None, limit: int = 100) -> List[TaskRecord]:
+    def list_tasks(self, tenant_id: str, agent_id: Optional[str] = None, status: Optional[str] = None, limit: int = 100) -> List[TaskRecord]:
         q = "select * from tasks where tenant_id=?"
         args: list[Any] = [tenant_id]
         if agent_id:
             q += " and agent_id=?"
             args.append(agent_id)
+        if status:
+            q += " and status=?"
+            args.append(status)
         q += " order by created_at desc limit ?"
         args.append(limit)
         with self.connect() as conn:

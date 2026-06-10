@@ -192,8 +192,8 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
         return store.list_events(tenant_id, host=host, event_type=event_type, process_name=process_name, user=user, hash_sha256=hash_sha256, remote_ip=remote_ip, domain=domain, indicator=indicator, limit=limit)
 
     @app.get("/api/v1/admin/tasks", response_model=list[TaskRecord])
-    def list_tasks(tenant_id: str = Query("default"), agent_id: Optional[str] = None, limit: int = 100, _admin=Depends(_admin_auth)):
-        return store.list_tasks(tenant_id, agent_id=agent_id, limit=limit)
+    def list_tasks(tenant_id: str = Query("default"), agent_id: Optional[str] = None, status: Optional[str] = None, limit: int = 100, _admin=Depends(_admin_auth)):
+        return store.list_tasks(tenant_id, agent_id=agent_id, status=status, limit=limit)
 
     @app.post("/api/v1/admin/tasks/expire-stale")
     def expire_stale_tasks(tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):
