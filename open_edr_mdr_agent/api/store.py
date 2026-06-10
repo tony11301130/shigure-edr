@@ -221,6 +221,18 @@ class SQLiteStore:
             )
         return token
 
+    def list_enrollment_tokens(self, tenant_id: str) -> List[Dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute("select tenant_id, token, expires_at, max_uses, uses, revoked, created_at from enrollment_tokens where tenant_id=? order by created_at desc", (tenant_id,)).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            token = item.pop("token")
+            item["token_prefix"] = f"{token[:6]}..."
+            item["revoked"] = bool(item["revoked"])
+            result.append(item)
+        return result
+
     def enroll_agent(self, *, enrollment_token: str, host: str, public_key: Optional[str], ip_address: Optional[str], os: Optional[str], agent_version: str, metadata: Dict[str, Any]) -> Dict[str, str]:
         now = utc_now()
         with self.connect() as conn:

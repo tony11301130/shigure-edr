@@ -374,6 +374,10 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
     def create_enrollment_token(tenant_id: str = "default", max_uses: Optional[int] = None, _admin=Depends(_admin_auth)):
         return {"tenant_id": tenant_id, "token": store.create_enrollment_token(tenant_id, max_uses=max_uses)}
 
+    @app.get("/api/v1/admin/enrollment-tokens")
+    def list_enrollment_tokens(tenant_id: str = "default", _admin=Depends(_admin_auth)):
+        return {"tenant_id": tenant_id, "tokens": store.list_enrollment_tokens(tenant_id)}
+
     @app.post("/api/v1/admin/detections/agent-health")
     def run_agent_health_detection(tenant_id: Optional[str] = None, stale_after_seconds: int = 300, _admin=Depends(_admin_auth)):
         stale_before = (datetime.now(timezone.utc) - timedelta(seconds=stale_after_seconds)).isoformat()
