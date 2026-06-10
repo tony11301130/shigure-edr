@@ -42,6 +42,7 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 | M1.4 | Load simulator | Done | `scripts/load_sim.py` simulates enrollment/heartbeat/ingest/detection; small local run validated |
 | M1.5 | Platform telemetry collector split | Done | OS-specific collector interface; Linux /proc implementation; Windows PowerShell/CIM read-only snapshot path cross-builds |
 | M1.6 | Windows service install skeleton | Done | Agent supports `--install-service` / `--uninstall-service`; Windows cross-build passes |
+| M1.7 | MDR investigation APIs | Done | Endpoint context, indicator hunt, and process-chain APIs over current event/alert/task store |
 
 ## Work log
 
@@ -67,3 +68,4 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 - 2026-06-10: Added load simulator and docs. Local validation: 25 agents, 50 events, 25 alerts in ~0.7s.
 - 2026-06-10: Split telemetry collector into OS-specific files. Added Windows process/network snapshot collector using fixed read-only PowerShell/CIM commands as interim path before ETW/API collectors. `GOOS=windows GOARCH=amd64 go build` passes.
 - 2026-06-10: Added Windows service install/uninstall skeleton to keep endpoint deployment as one branded agent service. `go test ./...` and Windows cross-build pass.
+- 2026-06-10: Added MDR investigation APIs for endpoint context, indicator hunt, and process-chain lookup. `pytest`, Go tests, Windows cross-build, and smoke pass.

@@ -149,6 +149,35 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
             raise HTTPException(status_code=404, detail="raw_evidence_not_found")
         return evidence
 
+    @app.get("/api/v1/admin/investigate/endpoint-context")
+    def endpoint_context(host: str, tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):
+        agents = [a for a in store.list_agents(tenant_id) if a.get("host") == host]
+        recent_events = store.list_events(tenant_id, host=host, limit=50)
+        recent_alerts = [a for a in store.list_alerts(tenant_id, limit=100) if a.host == host][:20]
+        tasks = [t for t in store.list_tasks(tenant_id, limit=100) if t.agent_id in {a.get("agent_id") for a in agents}][:20]
+        return {"tenant_id": tenant_id, "host": host, "agents": agents, "recent_events": recent_events, "recent_alerts": recent_alerts, "recent_tasks": tasks}
+
+    @app.get("/api/v1/admin/investigate/hunt")
+    def hunt_indicator(indicator: str, tenant_id: str = Query("default"), limit: int = 100, _admin=Depends(_admin_auth)):
+        events = store.list_events(tenant_id, indicator=indicator, limit=limit)
+        alerts = [a for a in store.list_alerts(tenant_id, limit=limit) if indicator.lower() in a.model_dump_json().lower()]
+        hosts = sorted({e.host for e in events if e.host} | {a.host for a in alerts if a.host})
+        return {"tenant_id": tenant_id, "indicator": indicator, "hosts": hosts, "events": events, "alerts": alerts[:limit]}
+
+    @app.get("/api/v1/admin/investigate/process-chain")
+    def process_chain(host: str, process_id: str, tenant_id: str = Query("default"), limit: int = 500, _admin=Depends(_admin_auth)):
+        events = store.list_events(tenant_id, host=host, limit=limit)
+        by_pid = {e.process_id: e for e in events if e.process_id}
+        chain = []
+        seen = set()
+        current = process_id
+        while current and current not in seen and current in by_pid:
+            seen.add(current)
+            event = by_pid[current]
+            chain.append(event)
+            current = event.parent_process_id
+        return {"tenant_id": tenant_id, "host": host, "process_id": process_id, "chain": chain}
+
     @app.post("/api/v1/admin/cases", response_model=CaseRecord)
     def create_case(req: CaseCreateRequest, _admin=Depends(_admin_auth)):
         try:
