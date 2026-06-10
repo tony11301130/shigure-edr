@@ -1,20 +1,25 @@
 # Open EDR + MDR System Spec
 
-Status: Draft v0.1  
-Owner goal: build an owned EDR + MDR system that can replace the Fidelis Endpoint toolkit capability inside `FidelisMDR_alertbased`, without endpoint blocking/containment in the first product scope.
+Status: Draft v0.2  
+Owner goal: build an intranet-first owned EDR + MDR system with one installable Windows agent, server-side control/tasking, Fidelis Endpoint toolkit capability parity, deeper threat hunting workflows, and a minimal V1 UI. Multi-tenant/MSSP mode is a later expansion, but schemas/APIs remain tenant-aware from day one.
 
 ## 1. Product intent
 
-Build a read-first EDR + MDR platform with our own endpoint layer and MDR workflow.
+Build a deployable intranet V1 EDR + MDR platform with our own endpoint layer and MDR workflow.
 
 The system must:
 
-1. Provide every read-only/evidence function currently used by the FidelisMDR alert-based toolkit.
-2. Collect endpoint telemetry expected from an EDR: command line, process tree, network flows, DNS, file, registry, auth/logon, persistence, and endpoint health.
-3. Normalize all telemetry into a vendor-neutral schema.
-4. Generate alerts and support MDR investigation/case workflow.
-5. Avoid blocking/containment by default: no isolation, kill process, delete file, registry modification, or endpoint tampering in v1.
-6. Keep a future-safe interface so response actions can be added later behind approval and audit controls.
+1. Install as one branded Windows agent on endpoints.
+2. Send telemetry to a central intranet server.
+3. Let the server control endpoints through reverse-proxy/NAT-friendly queued jobs: server queues jobs, agent polls and executes allowlisted read-only tasks.
+4. Provide every read-only/evidence function currently used by the FidelisMDR alert-based toolkit.
+5. Integrate ideas/adapters from multiple open-source security projects while keeping the endpoint-facing install as one agent.
+6. Collect endpoint telemetry expected from an EDR: command line, process tree, network flows, DNS, file, registry, auth/logon, persistence, and endpoint health.
+7. Normalize all telemetry into a vendor-neutral schema.
+8. Generate alerts and support MDR investigation/case/threat hunting workflow.
+9. Provide a minimal V1 UI for dashboard, alerts, agents, hunts, cases, tasks, and evidence.
+10. Avoid blocking/containment by default: no isolation, kill process, delete file, registry modification, or endpoint tampering in v1.
+11. Keep a future-safe interface so response actions and multi-tenant operation can be added later behind approval, RBAC, and audit controls.
 
 Non-goal for v1:
 

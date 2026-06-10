@@ -52,6 +52,7 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 | M1.14 | Alert-to-case auto evidence | Done | Creating a case from an alert auto-attaches the alert and alert raw evidence refs |
 | M1.15 | Tenant operational summary API | Done | Admin summary endpoint reports counts and status/severity distributions for agents/events/alerts/cases/tasks/evidence |
 | M1.16 | Windows Service runtime entrypoint | Done | Agent now detects Windows Service context and runs via SCM service handler with stop/shutdown handling |
+| M1.17 | Intranet EDR/MDR goal baseline | Done | Formalized intranet-first V1 goal, Fidelis parity, threat hunting, server tasking, and minimal UI scope |
 
 ## Work log
 
@@ -87,3 +88,4 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 - 2026-06-10: Creating a case from an alert now automatically attaches the alert and alert raw evidence as case evidence. Tests/smoke pass.
 - 2026-06-10: Added `/api/v1/admin/summary` with tenant-scoped operational counts and status/severity distributions. Tests/smoke pass.
 - 2026-06-10: Added real Windows Service runtime entrypoint using `golang.org/x/sys/windows/svc`; console mode still works. Service stop/shutdown requests signal the agent loop to exit cleanly. Tests, Windows cross-build, and smoke pass.
+- 2026-06-10: Formalized `GOAL.md`: intranet-first EDR/MDR V1, one Windows agent, central server, reverse-proxy-friendly queued jobs, Fidelis API parity, threat hunting, and minimal UI. Multi-tenant expansion remains future-safe through tenant-aware schema.
