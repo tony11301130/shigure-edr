@@ -65,6 +65,7 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 | M1.27 | Exact agent lookup API | Done | Admin API can fetch a single tenant-scoped agent record by agent_id |
 | M1.28 | Exact task lookup API | Done | Admin API can fetch a single tenant-scoped task by task_id for result/detail workflows |
 | M1.29 | Event query user/hash dimensions | Done | Event storage/query supports user and SHA256 hash filters with migration guard |
+| M1.30 | UI hunt/evidence panels | Done | Minimal intranet UI now surfaces saved hunts and raw evidence references alongside cases/tasks |
 
 ## Work log
 
@@ -113,3 +114,4 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 - 2026-06-10: Added tenant-scoped exact agent lookup API for endpoint detail workflows. Tests, Windows cross-build, and smoke pass.
 - 2026-06-10: Added tenant-scoped exact task lookup API for task detail/result workflows. Tests, Windows cross-build, and smoke pass.
 - 2026-06-10: Added user and SHA256 event query dimensions plus migration guard for legacy SQLite event tables. Tests, Windows cross-build, and smoke pass.
+- 2026-06-10: Added saved hunt and raw evidence reference panels to the minimal intranet UI. Tests, Windows cross-build, and smoke pass.

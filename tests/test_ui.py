@@ -9,6 +9,8 @@ def test_minimal_ui_served(tmp_path):
     assert res.status_code == 200
     assert "OPEN EDR MDR" in res.text
     assert "/api/v1/admin/summary" in res.text
+    assert "/api/v1/admin/hunts" in res.text
+    assert "/api/v1/admin/raw-evidence/list" in res.text
 
 
 def test_root_redirects_to_ui(tmp_path):

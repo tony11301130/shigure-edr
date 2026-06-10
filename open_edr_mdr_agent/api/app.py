@@ -478,6 +478,8 @@ UI_HTML = r"""
     <div class="card span6"><h2>Alerts</h2><div class="body" id="alerts"></div></div>
     <div class="card span6"><h2>Cases</h2><div class="body" id="cases"></div></div>
     <div class="card span6"><h2>Tasks</h2><div class="body" id="tasks"></div></div>
+    <div class="card span6"><h2>Saved Hunts</h2><div class="body" id="hunts"></div></div>
+    <div class="card span6"><h2>Raw Evidence</h2><div class="body" id="evidence"></div></div>
   </section>
 </main>
 <script>
@@ -488,12 +490,14 @@ async function api(path){const r=await fetch(path,{headers:headers()}); if(!r.ok
 function table(rows,cols){if(!rows||!rows.length)return '<span class="muted">no records</span>';return '<table><thead><tr>'+cols.map(c=>'<th>'+c[0]+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+cols.map(c=>'<td>'+esc(c[1](r)??'')+'</td>').join('')+'</tr>').join('')+'</tbody></table>'}
 function esc(v){return String(v).replace(/[&<>]/g,s=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[s]))}
 function pills(obj){return Object.entries(obj||{}).map(([k,v])=>`<span class="pill">${esc(k)}: <b>${esc(v)}</b></span>`).join(' ')}
-async function loadAll(){try{const t=tenant();const [s,a,al,c,ta]=await Promise.all([api(`/api/v1/admin/summary?tenant_id=${t}`),api(`/api/v1/admin/agents?tenant_id=${t}`),api(`/api/v1/admin/alerts?tenant_id=${t}&limit=25`),api(`/api/v1/admin/cases?tenant_id=${t}&limit=25`),api(`/api/v1/admin/tasks?tenant_id=${t}&limit=25`)]);renderSummary(s);renderAgents(a.agents);renderAlerts(al);renderCases(c);renderTasks(ta)}catch(e){$('metrics').innerHTML='<div class="card span12"><div class="body error">'+esc(e.message)+'</div></div>'}}
+async function loadAll(){try{const t=tenant();const [s,a,al,c,ta,h,ev]=await Promise.all([api(`/api/v1/admin/summary?tenant_id=${t}`),api(`/api/v1/admin/agents?tenant_id=${t}`),api(`/api/v1/admin/alerts?tenant_id=${t}&limit=25`),api(`/api/v1/admin/cases?tenant_id=${t}&limit=25`),api(`/api/v1/admin/tasks?tenant_id=${t}&limit=25`),api(`/api/v1/admin/hunts?tenant_id=${t}&limit=25`),api(`/api/v1/admin/raw-evidence/list?tenant_id=${t}&limit=25`)]);renderSummary(s);renderAgents(a.agents);renderAlerts(al);renderCases(c);renderTasks(ta);renderHunts(h);renderEvidence(ev.evidence)}catch(e){$('metrics').innerHTML='<div class="card span12"><div class="body error">'+esc(e.message)+'</div></div>'}}
 function renderSummary(s){const c=s.counts||{};$('metrics').innerHTML=['agents','events','alerts','cases','tasks','raw_evidence'].map(k=>`<div class="card span3"><div class="body"><div class="metric">${c[k]??0}</div><div class="label">${k}</div></div></div>`).join('');$('dist').innerHTML=`<p>Agents ${pills(s.agent_status)}</p><p>Tasks ${pills(s.task_status)}</p><p>Cases ${pills(s.case_status)}</p><p>Alerts ${pills(s.alert_severity)}</p>`}
 function renderAgents(rows){$('agents').innerHTML=table(rows,[['Host',r=>r.host],['IP',r=>r.ip_address],['OS',r=>r.os],['Version',r=>r.agent_version],['Last Seen',r=>r.last_seen]])}
 function renderAlerts(rows){$('alerts').innerHTML=table(rows,[['Severity',r=>`<span class="sev-${r.severity}">${r.severity}</span>`],['Title',r=>r.title],['Host',r=>r.host],['Time',r=>r.timestamp]])}
 function renderCases(rows){$('cases').innerHTML=table(rows,[['Status',r=>r.status],['Severity',r=>r.severity],['Title',r=>r.title],['Assignee',r=>r.assignee||''],['Updated',r=>r.updated_at]])}
 function renderTasks(rows){$('tasks').innerHTML=table(rows,[['Status',r=>r.status],['Type',r=>r.task_type],['Agent',r=>(r.agent_id||'').slice(0,8)],['Raw',r=>r.raw_ref?'yes':''],['Created',r=>r.created_at]])}
+function renderHunts(rows){$('hunts').innerHTML=table(rows,[['Enabled',r=>r.enabled?'yes':'no'],['Name',r=>r.name],['Indicator',r=>r.indicator||''],['Updated',r=>r.updated_at]])}
+function renderEvidence(rows){$('evidence').innerHTML=table(rows,[['Kind',r=>r.kind],['SHA256',r=>(r.sha256||'').slice(0,16)],['Ref',r=>r.raw_ref],['Created',r=>r.created_at]])}
 async function hunt(){try{const q=encodeURIComponent($('indicator').value);if(!q)return;$('hunt').innerHTML='<span class="muted">hunting...</span>';const r=await api(`/api/v1/admin/investigate/hunt?tenant_id=${tenant()}&indicator=${q}&limit=50`);$('hunt').innerHTML=`<p>Hosts ${pills(Object.fromEntries((r.hosts||[]).map(h=>[h,'hit'])))}</p>`+table(r.events||[],[['Type',e=>e.event_type],['Host',e=>e.host],['Process',e=>e.process_name],['Command',e=>e.command_line||e.remote_ip||e.domain||'']])}catch(e){$('hunt').innerHTML='<span class="error">'+esc(e.message)+'</span>'}}
 loadAll();
 </script>
