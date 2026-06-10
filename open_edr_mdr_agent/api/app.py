@@ -195,6 +195,13 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
     def expire_stale_tasks(tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):
         return {"tenant_id": tenant_id, "expired": store.expire_stale_tasks(tenant_id)}
 
+    @app.get("/api/v1/admin/tasks/{task_id}", response_model=TaskRecord)
+    def get_task(task_id: str, tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):
+        task = store.get_task(tenant_id, task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="task_not_found")
+        return task
+
     @app.get("/api/v1/admin/alerts/{alert_id}", response_model=Alert)
     def get_alert(alert_id: str, tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):
         alert = store.get_alert(tenant_id, alert_id)

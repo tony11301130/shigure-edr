@@ -63,6 +63,7 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 | M1.25 | Task timeout maintenance | Done | Admin maintenance endpoint marks stale claimed tasks as timed_out with explicit timeout error |
 | M1.26 | Raw evidence index API | Done | Analysts can list tenant-scoped raw evidence refs by kind before fetching exact payloads |
 | M1.27 | Exact agent lookup API | Done | Admin API can fetch a single tenant-scoped agent record by agent_id |
+| M1.28 | Exact task lookup API | Done | Admin API can fetch a single tenant-scoped task by task_id for result/detail workflows |
 
 ## Work log
 
@@ -109,3 +110,4 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 - 2026-06-10: Added task timeout maintenance so claimed tasks that exceed their timeout can be marked `timed_out` server-side. Tests, Windows cross-build, and smoke pass.
 - 2026-06-10: Added raw evidence index API with tenant and kind filters so analysts can browse evidence references without pulling payloads. Tests, Windows cross-build, and smoke pass.
 - 2026-06-10: Added tenant-scoped exact agent lookup API for endpoint detail workflows. Tests, Windows cross-build, and smoke pass.
+- 2026-06-10: Added tenant-scoped exact task lookup API for task detail/result workflows. Tests, Windows cross-build, and smoke pass.

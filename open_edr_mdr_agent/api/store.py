@@ -622,6 +622,11 @@ class SQLiteStore:
         with self.connect() as conn:
             return [self._task_record(dict(r)) for r in conn.execute(q, args).fetchall()]
 
+    def get_task(self, tenant_id: str, task_id: str) -> Optional[TaskRecord]:
+        with self.connect() as conn:
+            row = conn.execute("select * from tasks where tenant_id=? and task_id=?", (tenant_id, task_id)).fetchone()
+        return self._task_record(dict(row)) if row else None
+
     def list_alerts(self, tenant_id: str, limit: int = 100) -> List[Alert]:
         with self.connect() as conn:
             return [Alert.model_validate_json(r["alert_json"]) for r in conn.execute("select alert_json from alerts where tenant_id=? order by timestamp desc limit ?", (tenant_id, limit)).fetchall()]
