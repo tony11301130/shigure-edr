@@ -29,8 +29,8 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 |---|---|---|---|
 | M0.0 | Repo/version control/progress tracking | Done | Git initialized on `main`; progress log created |
 | M0.1 | Backend API + SQLite store | Done | FastAPI + SQLite: enrollment, heartbeat, ingest, detection alert insert, task claim/result, query |
-| M0.2 | Go agent skeleton | Pending | service-ready loop, config, enrollment, heartbeat, upload, task polling |
-| M0.3 | Read-only task execution | Pending | inventory, process list, net connections, services, scheduled tasks, file exists/hash |
+| M0.2 | Go agent skeleton | Done | Go loop supports enrollment, heartbeat, demo telemetry upload, task polling |
+| M0.3 | Read-only task execution | Partial | inventory, process_list, network_connections, file_exists, file_hash implemented; Windows-native services/scheduled tasks pending |
 | M0.4 | Minimal telemetry collectors | Pending | process command line, parent PID, network, DNS/event-log hooks where available |
 | M0.5 | Server-side detection | Pending | suspicious PowerShell, script+network, service/task, IOC, telemetry gap |
 | M0.6 | MDR query/evidence workflow | Pending | recent events, alerts, task result evidence |
@@ -42,3 +42,4 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 - 2026-06-10: Updated spec through grill decisions: single agent, Windows-first, Go agent, server-side detection, hybrid upload, polling tasks, 10k platform multi-tenant target, intranet-first development.
 - 2026-06-10: Initialized git repository and committed initial spec/prototype.
 - 2026-06-10: Implemented M0.1 backend API with SQLite store and minimal server-side detection. Added integration test for enroll → heartbeat → ingest → alert → task → result.
+- 2026-06-10: Implemented Go agent skeleton with enrollment, heartbeat, demo suspicious event upload, polling task claim, and allowlisted read-only task execution. Local E2E against FastAPI backend succeeded: alert generated and `process_list` task completed.
