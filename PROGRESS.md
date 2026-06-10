@@ -35,6 +35,7 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 | M0.5 | Server-side detection | Done for M0 | Built-in tests for encoded PowerShell, script+network, service/task, IOC, and agent telemetry gap |
 | M0.6 | MDR query/evidence workflow | Partial | Admin APIs list agents/events/alerts/tasks; event filters include host/type/process/remote_ip/domain/indicator |
 | M0.7 | Local integration smoke test | Done | `scripts/m0_smoke.sh` validates backend + Go agent E2E |
+| M1.0 | Agent config/policy update | Done | Tenant config API, heartbeat config response, Go agent runtime config apply |
 
 ## Work log
 
@@ -53,3 +54,4 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 - 2026-06-10: Added dev admin token protection for admin/MDR APIs; updated tests and smoke script.
 - 2026-06-10: Added `open-edr-mdr-agent serve` CLI command and README quick-start notes.
 - 2026-06-10: Added cross-tenant task creation guard; tests verify tenant mismatch is rejected.
+- 2026-06-10: Added tenant agent config API and heartbeat config sync; Go agent applies task polling/snapshot/demo settings from backend. Tests and smoke pass.

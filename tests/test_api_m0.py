@@ -19,9 +19,15 @@ def test_m0_enroll_ingest_detect_task_loop(tmp_path):
     agent_id = auth["agent_id"]
     headers = {"Authorization": f"Bearer {auth['agent_token']}"}
 
+    config_update = client.put("/api/v1/admin/config?tenant_id=default", headers={"Authorization":"Bearer dev-admin-token"}, json={"version": 1, "task_poll_seconds": 7, "heartbeat_seconds": 30, "upload_interval_seconds": 15, "max_snapshot_events": 3, "collect_snapshot": True, "demo_suspicious_event": False, "features": {"windows_etw": False}})
+    assert config_update.status_code == 200
+    assert config_update.json()["version"] >= 2
+
     hb = client.post(f"/api/v1/agents/{agent_id}/heartbeat", headers=headers, json={"host": "POS01", "os": "Windows", "agent_version": "dev-test"})
     assert hb.status_code == 200
     assert hb.json()["status"] == "ok"
+    assert hb.json()["config"]["task_poll_seconds"] == 7
+    assert hb.json()["config"]["max_snapshot_events"] == 3
 
     event = {
         "source": "internal",

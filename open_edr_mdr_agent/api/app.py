@@ -8,6 +8,7 @@ from typing import Annotated, Optional
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 
 from open_edr_mdr_agent.api.models import (
+    AgentConfig,
     AgentRecord,
     EnrollmentRequest,
     EnrollmentResponse,
@@ -55,14 +56,16 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
             )
         except ValueError as exc:
             raise HTTPException(status_code=401, detail=str(exc)) from exc
-        return EnrollmentResponse(**result, config={"upload_mode": "hybrid", "task_poll_seconds": 15, "tenant_id": result["tenant_id"]})
+        config = store.get_agent_config(result["tenant_id"])
+        return EnrollmentResponse(**result, config={**config.model_dump(), "tenant_id": result["tenant_id"]})
 
     @app.post("/api/v1/agents/{agent_id}/heartbeat", response_model=HeartbeatResponse)
     def heartbeat(agent=Depends(_agent_auth), req: HeartbeatRequest = None):
         req = req or HeartbeatRequest(host=agent["host"])
         store.update_heartbeat(agent["agent_id"], req.host, req.ip_address, req.os, req.agent_version, req.health)
         pending = store.pending_tasks_count(agent["tenant_id"], agent["agent_id"]) > 0
-        return HeartbeatResponse(status="ok", tasks_pending=pending)
+        config = store.get_agent_config(agent["tenant_id"])
+        return HeartbeatResponse(status="ok", tasks_pending=pending, config_version=config.version, config=config)
 
     @app.post("/api/v1/agents/{agent_id}/events", response_model=EventIngestResponse)
     def ingest_events(agent=Depends(_agent_auth), req: EventIngestRequest = None):
@@ -130,6 +133,14 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
     @app.get("/api/v1/admin/alerts", response_model=list[Alert])
     def list_alerts(tenant_id: str = Query("default"), limit: int = 100, _admin=Depends(_admin_auth)):
         return store.list_alerts(tenant_id, limit=limit)
+
+    @app.get("/api/v1/admin/config", response_model=AgentConfig)
+    def get_config(tenant_id: str = "default", _admin=Depends(_admin_auth)):
+        return store.get_agent_config(tenant_id)
+
+    @app.put("/api/v1/admin/config", response_model=AgentConfig)
+    def put_config(config: AgentConfig, tenant_id: str = "default", _admin=Depends(_admin_auth)):
+        return store.set_agent_config(tenant_id, config)
 
     @app.post("/api/v1/admin/enrollment-tokens")
     def create_enrollment_token(tenant_id: str = "default", max_uses: Optional[int] = None, _admin=Depends(_admin_auth)):

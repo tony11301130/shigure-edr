@@ -51,6 +51,24 @@ type NormalizedEvent struct {
 	Raw             map[string]any `json:"raw"`
 }
 
+type AgentConfig struct {
+	Version               int            `json:"version"`
+	TaskPollSeconds       int            `json:"task_poll_seconds"`
+	HeartbeatSeconds      int            `json:"heartbeat_seconds"`
+	UploadIntervalSeconds int            `json:"upload_interval_seconds"`
+	MaxSnapshotEvents     int            `json:"max_snapshot_events"`
+	CollectSnapshot       bool           `json:"collect_snapshot"`
+	DemoSuspiciousEvent   bool           `json:"demo_suspicious_event"`
+	Features              map[string]any `json:"features"`
+}
+
+type HeartbeatResponse struct {
+	Status        string      `json:"status"`
+	TasksPending  bool        `json:"tasks_pending"`
+	ConfigVersion int         `json:"config_version"`
+	Config        AgentConfig `json:"config"`
+}
+
 type Task struct {
 	TaskID   string         `json:"task_id"`
 	TenantID string         `json:"tenant_id"`
@@ -68,10 +86,10 @@ func (c *Client) Enroll(req EnrollmentRequest) (*EnrollmentResponse, error) {
 	return &out, nil
 }
 
-func (c *Client) Heartbeat(agentID, token string, body map[string]any) (map[string]any, error) {
-	var out map[string]any
+func (c *Client) Heartbeat(agentID, token string, body map[string]any) (*HeartbeatResponse, error) {
+	var out HeartbeatResponse
 	err := c.do("POST", "/api/v1/agents/"+agentID+"/heartbeat", token, body, &out)
-	return out, err
+	return &out, err
 }
 
 func (c *Client) IngestEvents(agentID, token string, events []NormalizedEvent) error {

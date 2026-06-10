@@ -28,7 +28,7 @@ func main() {
 	demoEvent := flag.Bool("demo-suspicious-event", false, "send a demo suspicious PowerShell event for detection smoke test")
 	collectSnapshot := flag.Bool("collect-snapshot", true, "send limited process/network telemetry snapshot each cycle")
 	maxSnapshotEvents := flag.Int("max-snapshot-events", 25, "maximum snapshot telemetry events per cycle")
-	interval := flag.Duration("interval", 15*time.Second, "loop interval")
+	interval := flag.Duration("interval", 15*time.Second, "fallback loop interval before backend config is received")
 	flag.Parse()
 
 	client := agentapi.New(*server)
@@ -45,14 +45,23 @@ func main() {
 		log.Printf("enrolled agent_id=%s tenant_id=%s", agentState.AgentID, agentState.TenantID)
 	}
 
+	runtimeConfig := agentapi.AgentConfig{TaskPollSeconds: int(interval.Seconds()), HeartbeatSeconds: int(interval.Seconds()), UploadIntervalSeconds: int(interval.Seconds()), MaxSnapshotEvents: *maxSnapshotEvents, CollectSnapshot: *collectSnapshot, DemoSuspiciousEvent: *demoEvent}
 	for {
-		if err := runCycle(client, agentState, *spoolPath, *demoEvent, *collectSnapshot, *maxSnapshotEvents); err != nil {
+		newConfig, err := runCycle(client, agentState, *spoolPath, runtimeConfig)
+		if err != nil {
 			log.Printf("cycle error: %v", err)
+		}
+		if newConfig != nil {
+			runtimeConfig = mergeCLIOverrides(*newConfig, *demoEvent, *maxSnapshotEvents)
 		}
 		if *once {
 			return
 		}
-		time.Sleep(*interval)
+		sleepSeconds := runtimeConfig.TaskPollSeconds
+		if sleepSeconds <= 0 {
+			sleepSeconds = int(interval.Seconds())
+		}
+		time.Sleep(time.Duration(sleepSeconds) * time.Second)
 	}
 }
 
@@ -68,12 +77,12 @@ func enroll(client *agentapi.Client, token string) (*state.State, error) {
 	return &state.State{TenantID: res.TenantID, AgentID: res.AgentID, AgentToken: res.AgentToken}, nil
 }
 
-func runCycle(client *agentapi.Client, s *state.State, spoolPath string, sendDemo bool, collectSnapshot bool, maxSnapshotEvents int) error {
+func runCycle(client *agentapi.Client, s *state.State, spoolPath string, cfg agentapi.AgentConfig) (*agentapi.AgentConfig, error) {
 	if err := spool.Flush(spoolPath, client, s); err != nil {
 		log.Printf("spool flush failed: %v", err)
 	}
 	inv := collect.HostInventory()
-	_, err := client.Heartbeat(s.AgentID, s.AgentToken, map[string]any{
+	heartbeat, err := client.Heartbeat(s.AgentID, s.AgentToken, map[string]any{
 		"host": inv.Host, "ip_address": inv.IPAddress, "os": inv.OS, "agent_version": version,
 		"health": map[string]any{"status": "ok"},
 	})
@@ -82,16 +91,16 @@ func runCycle(client *agentapi.Client, s *state.State, spoolPath string, sendDem
 	}
 
 	events := []agentapi.NormalizedEvent{}
-	if collectSnapshot {
-		events = append(events, collect.SnapshotTelemetry(s.TenantID, maxSnapshotEvents)...)
+	if cfg.CollectSnapshot {
+		events = append(events, collect.SnapshotTelemetry(s.TenantID, cfg.MaxSnapshotEvents)...)
 	}
-	if sendDemo {
+	if cfg.DemoSuspiciousEvent {
 		events = append(events, collect.DemoSuspiciousPowerShellEvent(s.TenantID))
 	}
 	if len(events) > 0 {
 		if err := client.IngestEvents(s.AgentID, s.AgentToken, events); err != nil {
 			if spoolErr := spool.AppendEvents(spoolPath, events); spoolErr != nil {
-				return fmt.Errorf("ingest events: %w; spool failed: %v", err, spoolErr)
+				return heartbeatConfig(heartbeat), fmt.Errorf("ingest events: %w; spool failed: %v", err, spoolErr)
 			}
 			log.Printf("ingest failed, events spooled: %v", err)
 		}
@@ -99,12 +108,32 @@ func runCycle(client *agentapi.Client, s *state.State, spoolPath string, sendDem
 
 	claimed, err := client.ClaimTasks(s.AgentID, s.AgentToken, 5)
 	if err != nil {
-		return fmt.Errorf("claim tasks: %w", err)
+		return heartbeatConfig(heartbeat), fmt.Errorf("claim tasks: %w", err)
 	}
 	for _, task := range claimed {
 		executeAndReport(client, s, spoolPath, task)
 	}
-	return nil
+	return heartbeatConfig(heartbeat), nil
+}
+
+func heartbeatConfig(h *agentapi.HeartbeatResponse) *agentapi.AgentConfig {
+	if h == nil {
+		return nil
+	}
+	return &h.Config
+}
+
+func mergeCLIOverrides(cfg agentapi.AgentConfig, forceDemo bool, fallbackMaxSnapshotEvents int) agentapi.AgentConfig {
+	if cfg.TaskPollSeconds <= 0 {
+		cfg.TaskPollSeconds = 15
+	}
+	if cfg.MaxSnapshotEvents <= 0 {
+		cfg.MaxSnapshotEvents = fallbackMaxSnapshotEvents
+	}
+	if forceDemo {
+		cfg.DemoSuspiciousEvent = true
+	}
+	return cfg
 }
 
 func executeAndReport(client *agentapi.Client, s *state.State, spoolPath string, task agentapi.Task) {

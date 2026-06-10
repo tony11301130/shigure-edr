@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 from uuid import uuid4
 
-from open_edr_mdr_agent.api.models import AgentRecord, TaskRecord
+from open_edr_mdr_agent.api.models import AgentConfig, AgentRecord, TaskRecord
 from open_edr_mdr_agent.core.schemas import Alert, NormalizedEvent
 
 
@@ -90,6 +90,12 @@ class SQLiteStore:
                     alert_json text not null
                 );
                 create index if not exists idx_alerts_tenant_time on alerts(tenant_id, timestamp);
+                create table if not exists tenant_configs (
+                    tenant_id text primary key,
+                    version integer not null,
+                    config_json text not null,
+                    updated_at text not null
+                );
                 create table if not exists tasks (
                     task_id text primary key,
                     tenant_id text not null,
@@ -107,6 +113,24 @@ class SQLiteStore:
                 create index if not exists idx_tasks_agent_status on tasks(tenant_id, agent_id, status);
                 """
             )
+
+    def get_agent_config(self, tenant_id: str = "default") -> AgentConfig:
+        with self.connect() as conn:
+            row = conn.execute("select config_json from tenant_configs where tenant_id=?", (tenant_id,)).fetchone()
+        if not row:
+            return AgentConfig()
+        return AgentConfig.model_validate_json(row["config_json"])
+
+    def set_agent_config(self, tenant_id: str, config: AgentConfig) -> AgentConfig:
+        current = self.get_agent_config(tenant_id)
+        if config.version <= current.version:
+            config.version = current.version + 1
+        with self.connect() as conn:
+            conn.execute(
+                "insert or replace into tenant_configs(tenant_id, version, config_json, updated_at) values (?, ?, ?, ?)",
+                (tenant_id, config.version, config.model_dump_json(), utc_now()),
+            )
+        return config
 
     def create_enrollment_token(self, tenant_id: str = "default", token: Optional[str] = None, max_uses: Optional[int] = None, expires_at: Optional[str] = None) -> str:
         token = token or secrets.token_urlsafe(32)

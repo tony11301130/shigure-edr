@@ -34,10 +34,22 @@ class HeartbeatRequest(BaseModel):
     health: Dict[str, Any] = Field(default_factory=dict)
 
 
+class AgentConfig(BaseModel):
+    version: int = 1
+    task_poll_seconds: int = 15
+    heartbeat_seconds: int = 30
+    upload_interval_seconds: int = 15
+    max_snapshot_events: int = 25
+    collect_snapshot: bool = True
+    demo_suspicious_event: bool = False
+    features: Dict[str, Any] = Field(default_factory=dict)
+
+
 class HeartbeatResponse(BaseModel):
     status: str = "ok"
     tasks_pending: bool = False
     config_version: int = 1
+    config: AgentConfig = Field(default_factory=AgentConfig)
 
 
 class EventIngestRequest(BaseModel):
