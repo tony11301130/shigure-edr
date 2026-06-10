@@ -595,6 +595,17 @@ class SQLiteStore:
         data["payload"] = json.loads(data.pop("payload_json"))
         return data
 
+    def list_raw_evidence(self, tenant_id: str, kind: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
+        q = "select raw_ref, tenant_id, kind, sha256, created_at from raw_evidence where tenant_id=?"
+        args: list[Any] = [tenant_id]
+        if kind:
+            q += " and kind=?"
+            args.append(kind)
+        q += " order by created_at desc limit ?"
+        args.append(limit)
+        with self.connect() as conn:
+            return [dict(row) for row in conn.execute(q, args).fetchall()]
+
     def list_tasks(self, tenant_id: str, agent_id: Optional[str] = None, limit: int = 100) -> List[TaskRecord]:
         q = "select * from tasks where tenant_id=?"
         args: list[Any] = [tenant_id]

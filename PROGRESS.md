@@ -61,6 +61,7 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 | M1.23 | Read-only task argument validation | Done | Server validates catalog args before queueing tasks, including required paths and allowlisted Windows Event Log profiles |
 | M1.24 | Saved hunt lifecycle controls | Done | Saved hunts can be updated/disabled, filtered by enabled state, and disabled hunts cannot be run |
 | M1.25 | Task timeout maintenance | Done | Admin maintenance endpoint marks stale claimed tasks as timed_out with explicit timeout error |
+| M1.26 | Raw evidence index API | Done | Analysts can list tenant-scoped raw evidence refs by kind before fetching exact payloads |
 
 ## Work log
 
@@ -105,3 +106,4 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 - 2026-06-10: Added server-side read-only task argument validation so unsafe/malformed task requests are rejected before endpoints claim them. Tests, Windows cross-build, and smoke pass.
 - 2026-06-10: Added saved hunt lifecycle controls: patch/update hunts, filter enabled hunts, and block disabled hunt execution. Tests, Windows cross-build, and smoke pass.
 - 2026-06-10: Added task timeout maintenance so claimed tasks that exceed their timeout can be marked `timed_out` server-side. Tests, Windows cross-build, and smoke pass.
+- 2026-06-10: Added raw evidence index API with tenant and kind filters so analysts can browse evidence references without pulling payloads. Tests, Windows cross-build, and smoke pass.
