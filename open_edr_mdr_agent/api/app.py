@@ -96,8 +96,10 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
 
     @app.post("/api/v1/admin/tasks", response_model=TaskRecord)
     def create_task(req: TaskCreateRequest, _admin=Depends(_admin_auth)):
-        task_id = store.create_task(req.tenant_id, req.agent_id, req.task_type, req.args, req.timeout_seconds)
-        claimed = store.claim_tasks(req.tenant_id, req.agent_id, max_tasks=0)
+        try:
+            task_id = store.create_task(req.tenant_id, req.agent_id, req.task_type, req.args, req.timeout_seconds)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         # Fetch via direct SQLite row to avoid adding public store method for now.
         with store.connect() as conn:
             row = conn.execute("select * from tasks where task_id=?", (task_id,)).fetchone()

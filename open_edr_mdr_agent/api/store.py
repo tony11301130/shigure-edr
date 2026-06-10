@@ -173,6 +173,11 @@ class SQLiteStore:
     def create_task(self, tenant_id: str, agent_id: str, task_type: str, args: Dict[str, Any], timeout_seconds: int) -> str:
         task_id = str(uuid4())
         with self.connect() as conn:
+            agent = conn.execute("select tenant_id from agents where agent_id=?", (agent_id,)).fetchone()
+            if not agent:
+                raise ValueError("target_agent_not_found")
+            if agent["tenant_id"] != tenant_id:
+                raise ValueError("target_agent_tenant_mismatch")
             conn.execute(
                 "insert into tasks(task_id, tenant_id, agent_id, task_type, args_json, status, created_at, timeout_seconds) values (?, ?, ?, ?, ?, 'queued', ?, ?)",
                 (task_id, tenant_id, agent_id, task_type, json.dumps(args), utc_now(), timeout_seconds),
