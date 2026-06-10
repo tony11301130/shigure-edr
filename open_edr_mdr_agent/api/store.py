@@ -686,6 +686,13 @@ class SQLiteStore:
         with self.connect() as conn:
             return [dict(r) for r in conn.execute(q, args).fetchall()]
 
+    def mark_agents_offline(self, agent_ids: List[str]) -> int:
+        if not agent_ids:
+            return 0
+        with self.connect() as conn:
+            conn.executemany("update agents set status='offline' where agent_id=?", [(agent_id,) for agent_id in agent_ids])
+        return len(agent_ids)
+
     def pending_tasks_count(self, tenant_id: str, agent_id: str) -> int:
         with self.connect() as conn:
             row = conn.execute("select count(*) c from tasks where tenant_id=? and agent_id=? and status='queued'", (tenant_id, agent_id)).fetchone()

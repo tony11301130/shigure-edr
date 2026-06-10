@@ -401,8 +401,9 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
                 raw={"rule_id": "builtin.agent.offline", "tenant_id": agent_row["tenant_id"], "agent_id": agent_row["agent_id"], "last_seen": agent_row.get("last_seen")},
             )
             alerts.append(alert)
+        marked_offline = store.mark_agents_offline([agent["agent_id"] for agent in store.stale_agents(stale_before, tenant_id=tenant_id)])
         inserted = store.insert_alerts(alerts)
-        return {"stale_agents": len(alerts), "alerts_generated": inserted}
+        return {"stale_agents": len(alerts), "agents_marked_offline": marked_offline, "alerts_generated": inserted}
 
     app.dependency_overrides[_agent_auth] = _make_agent_auth(app)
     return app

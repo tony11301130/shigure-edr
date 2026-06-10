@@ -16,6 +16,10 @@ def test_agent_health_detection_generates_gap_alert(tmp_path):
     run = client.post("/api/v1/admin/detections/agent-health?tenant_id=default&stale_after_seconds=60", headers={"Authorization":"Bearer dev-admin-token"})
     assert run.status_code == 200
     assert run.json()["alerts_generated"] == 1
+    assert run.json()["agents_marked_offline"] == 1
+
+    agents = client.get("/api/v1/admin/agents?tenant_id=default", headers={"Authorization":"Bearer dev-admin-token"}).json()["agents"]
+    assert agents[0]["status"] == "offline"
 
     alerts = client.get("/api/v1/admin/alerts?tenant_id=default", headers={"Authorization":"Bearer dev-admin-token"}).json()
     assert alerts[0]["title"] == "Agent offline or telemetry gap"
