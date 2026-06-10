@@ -43,7 +43,7 @@ python - <<PY
 import json, urllib.request
 state=json.load(open('$STATE'))
 body=json.dumps({'tenant_id':'default','agent_id':state['agent_id'],'task_type':'file_exists','args':{'path':'$STATE'}}).encode()
-req=urllib.request.Request('http://127.0.0.1:${PORT}/api/v1/admin/tasks', data=body, headers={'Content-Type':'application/json'}, method='POST')
+req=urllib.request.Request('http://127.0.0.1:${PORT}/api/v1/admin/tasks', data=body, headers={'Content-Type':'application/json','Authorization':'Bearer dev-admin-token'}, method='POST')
 print(urllib.request.urlopen(req).read().decode())
 PY
 

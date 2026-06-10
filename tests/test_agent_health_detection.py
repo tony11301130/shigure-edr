@@ -13,10 +13,10 @@ def test_agent_health_detection_generates_gap_alert(tmp_path):
     with app.state.store.connect() as conn:
         conn.execute("update agents set last_seen='2000-01-01T00:00:00+00:00' where agent_id=?", (agent_id,))
 
-    run = client.post("/api/v1/admin/detections/agent-health?tenant_id=default&stale_after_seconds=60")
+    run = client.post("/api/v1/admin/detections/agent-health?tenant_id=default&stale_after_seconds=60", headers={"Authorization":"Bearer dev-admin-token"})
     assert run.status_code == 200
     assert run.json()["alerts_generated"] == 1
 
-    alerts = client.get("/api/v1/admin/alerts?tenant_id=default").json()
+    alerts = client.get("/api/v1/admin/alerts?tenant_id=default", headers={"Authorization":"Bearer dev-admin-token"}).json()
     assert alerts[0]["title"] == "Agent offline or telemetry gap"
     assert alerts[0]["raw"]["agent_id"] == agent_id

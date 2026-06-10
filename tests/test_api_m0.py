@@ -38,12 +38,12 @@ def test_m0_enroll_ingest_detect_task_loop(tmp_path):
     assert ingest.status_code == 200, ingest.text
     assert ingest.json() == {"accepted": 1, "alerts_generated": 1}
 
-    alerts = client.get("/api/v1/admin/alerts?tenant_id=default").json()
+    alerts = client.get("/api/v1/admin/alerts?tenant_id=default", headers={"Authorization":"Bearer dev-admin-token"}).json()
     assert len(alerts) == 1
     assert alerts[0]["title"] == "Suspicious encoded PowerShell command"
     assert alerts[0]["raw"]["tenant_id"] == "default"
 
-    task = client.post("/api/v1/admin/tasks", json={"tenant_id": "default", "agent_id": agent_id, "task_type": "process_list", "args": {}})
+    task = client.post("/api/v1/admin/tasks", headers={"Authorization":"Bearer dev-admin-token"}, json={"tenant_id": "default", "agent_id": agent_id, "task_type": "process_list", "args": {}})
     assert task.status_code == 200, task.text
     task_id = task.json()["task_id"]
 
@@ -57,16 +57,16 @@ def test_m0_enroll_ingest_detect_task_loop(tmp_path):
     result = client.post(f"/api/v1/agents/{agent_id}/tasks/{task_id}/result", headers=headers, json={"status": "succeeded", "result": {"processes": []}})
     assert result.status_code == 200
 
-    events = client.get("/api/v1/admin/events?tenant_id=default&host=POS01").json()
+    events = client.get("/api/v1/admin/events?tenant_id=default&host=POS01", headers={"Authorization":"Bearer dev-admin-token"}).json()
     assert len(events) == 1
     assert events[0]["tenant_id"] == "default"
 
-    hunted = client.get("/api/v1/admin/events?tenant_id=default&indicator=SQBFAFgA").json()
+    hunted = client.get("/api/v1/admin/events?tenant_id=default&indicator=SQBFAFgA", headers={"Authorization":"Bearer dev-admin-token"}).json()
     assert len(hunted) == 1
 
-    process_events = client.get("/api/v1/admin/events?tenant_id=default&event_type=process_start&process_name=powershell").json()
+    process_events = client.get("/api/v1/admin/events?tenant_id=default&event_type=process_start&process_name=powershell", headers={"Authorization":"Bearer dev-admin-token"}).json()
     assert len(process_events) == 1
 
-    tasks = client.get(f"/api/v1/admin/tasks?tenant_id=default&agent_id={agent_id}").json()
+    tasks = client.get(f"/api/v1/admin/tasks?tenant_id=default&agent_id={agent_id}", headers={"Authorization":"Bearer dev-admin-token"}).json()
     assert tasks[0]["task_id"] == task_id
     assert tasks[0]["status"] == "succeeded"

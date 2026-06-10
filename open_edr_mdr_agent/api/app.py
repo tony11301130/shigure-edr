@@ -27,6 +27,7 @@ from open_edr_mdr_agent.core.schemas import Alert, NormalizedEvent, Severity, So
 
 DEFAULT_DB = os.environ.get("OPEN_EDR_MDR_DB", "/tmp/open-edr-mdr-agent.sqlite3")
 DEFAULT_DEV_TOKEN = os.environ.get("OPEN_EDR_MDR_DEV_ENROLLMENT_TOKEN", "dev-token")
+DEFAULT_ADMIN_TOKEN = os.environ.get("OPEN_EDR_MDR_ADMIN_TOKEN", "dev-admin-token")
 
 
 def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = True) -> FastAPI:
@@ -94,7 +95,7 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
         return {"status": "ok"}
 
     @app.post("/api/v1/admin/tasks", response_model=TaskRecord)
-    def create_task(req: TaskCreateRequest):
+    def create_task(req: TaskCreateRequest, _admin=Depends(_admin_auth)):
         task_id = store.create_task(req.tenant_id, req.agent_id, req.task_type, req.args, req.timeout_seconds)
         claimed = store.claim_tasks(req.tenant_id, req.agent_id, max_tasks=0)
         # Fetch via direct SQLite row to avoid adding public store method for now.
@@ -103,11 +104,12 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
             return store._task_record(dict(row))
 
     @app.get("/api/v1/admin/agents")
-    def list_agents(tenant_id: str = Query("default")):
+    def list_agents(tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):
         return {"agents": store.list_agents(tenant_id)}
 
     @app.get("/api/v1/admin/events", response_model=list[NormalizedEvent])
     def list_events(
+        _admin=Depends(_admin_auth),
         tenant_id: str = Query("default"),
         host: Optional[str] = None,
         event_type: Optional[str] = None,
@@ -120,19 +122,19 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
         return store.list_events(tenant_id, host=host, event_type=event_type, process_name=process_name, remote_ip=remote_ip, domain=domain, indicator=indicator, limit=limit)
 
     @app.get("/api/v1/admin/tasks", response_model=list[TaskRecord])
-    def list_tasks(tenant_id: str = Query("default"), agent_id: Optional[str] = None, limit: int = 100):
+    def list_tasks(tenant_id: str = Query("default"), agent_id: Optional[str] = None, limit: int = 100, _admin=Depends(_admin_auth)):
         return store.list_tasks(tenant_id, agent_id=agent_id, limit=limit)
 
     @app.get("/api/v1/admin/alerts", response_model=list[Alert])
-    def list_alerts(tenant_id: str = Query("default"), limit: int = 100):
+    def list_alerts(tenant_id: str = Query("default"), limit: int = 100, _admin=Depends(_admin_auth)):
         return store.list_alerts(tenant_id, limit=limit)
 
     @app.post("/api/v1/admin/enrollment-tokens")
-    def create_enrollment_token(tenant_id: str = "default", max_uses: Optional[int] = None):
+    def create_enrollment_token(tenant_id: str = "default", max_uses: Optional[int] = None, _admin=Depends(_admin_auth)):
         return {"tenant_id": tenant_id, "token": store.create_enrollment_token(tenant_id, max_uses=max_uses)}
 
     @app.post("/api/v1/admin/detections/agent-health")
-    def run_agent_health_detection(tenant_id: Optional[str] = None, stale_after_seconds: int = 300):
+    def run_agent_health_detection(tenant_id: Optional[str] = None, stale_after_seconds: int = 300, _admin=Depends(_admin_auth)):
         stale_before = (datetime.now(timezone.utc) - timedelta(seconds=stale_after_seconds)).isoformat()
         alerts = []
         for agent_row in store.stale_agents(stale_before, tenant_id=tenant_id):
@@ -153,6 +155,16 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
 
     app.dependency_overrides[_agent_auth] = _make_agent_auth(app)
     return app
+
+
+def _admin_auth(authorization: Annotated[Optional[str], Header()] = None, x_admin_token: Annotated[Optional[str], Header()] = None):
+    expected = os.environ.get("OPEN_EDR_MDR_ADMIN_TOKEN", DEFAULT_ADMIN_TOKEN)
+    supplied = x_admin_token
+    if authorization and authorization.lower().startswith("bearer "):
+        supplied = authorization.split(" ", 1)[1]
+    if supplied != expected:
+        raise HTTPException(status_code=401, detail="invalid admin token")
+    return {"role": "admin"}
 
 
 def _agent_auth(agent_id: str, authorization: Annotated[Optional[str], Header()] = None):
