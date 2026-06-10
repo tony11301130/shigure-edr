@@ -35,11 +35,11 @@ class HeartbeatRequest(BaseModel):
 
 
 class AgentConfig(BaseModel):
-    version: int = 1
-    task_poll_seconds: int = 15
-    heartbeat_seconds: int = 30
-    upload_interval_seconds: int = 15
-    max_snapshot_events: int = 25
+    version: int = Field(default=1, ge=1)
+    task_poll_seconds: int = Field(default=15, ge=1, le=3600)
+    heartbeat_seconds: int = Field(default=30, ge=1, le=3600)
+    upload_interval_seconds: int = Field(default=15, ge=1, le=3600)
+    max_snapshot_events: int = Field(default=25, ge=0, le=1000)
     collect_snapshot: bool = True
     collect_process_snapshot: bool = True
     collect_network_snapshot: bool = True
