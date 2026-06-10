@@ -233,6 +233,11 @@ class SQLiteStore:
             result.append(item)
         return result
 
+    def revoke_enrollment_token(self, tenant_id: str, token: str) -> bool:
+        with self.connect() as conn:
+            cur = conn.execute("update enrollment_tokens set revoked=1 where tenant_id=? and token=?", (tenant_id, token))
+        return cur.rowcount > 0
+
     def enroll_agent(self, *, enrollment_token: str, host: str, public_key: Optional[str], ip_address: Optional[str], os: Optional[str], agent_version: str, metadata: Dict[str, Any]) -> Dict[str, str]:
         now = utc_now()
         with self.connect() as conn:

@@ -378,6 +378,12 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
     def list_enrollment_tokens(tenant_id: str = "default", _admin=Depends(_admin_auth)):
         return {"tenant_id": tenant_id, "tokens": store.list_enrollment_tokens(tenant_id)}
 
+    @app.post("/api/v1/admin/enrollment-tokens/revoke")
+    def revoke_enrollment_token(token: str, tenant_id: str = "default", _admin=Depends(_admin_auth)):
+        if not store.revoke_enrollment_token(tenant_id, token):
+            raise HTTPException(status_code=404, detail="enrollment_token_not_found")
+        return {"tenant_id": tenant_id, "revoked": True}
+
     @app.post("/api/v1/admin/detections/agent-health")
     def run_agent_health_detection(tenant_id: Optional[str] = None, stale_after_seconds: int = 300, _admin=Depends(_admin_auth)):
         stale_before = (datetime.now(timezone.utc) - timedelta(seconds=stale_after_seconds)).isoformat()
