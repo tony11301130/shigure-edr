@@ -54,6 +54,7 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 | M1.16 | Windows Service runtime entrypoint | Done | Agent now detects Windows Service context and runs via SCM service handler with stop/shutdown handling |
 | M1.17 | Intranet EDR/MDR goal baseline | Done | Formalized intranet-first V1 goal, Fidelis parity, threat hunting, server tasking, and minimal UI scope |
 | M1.18 | Minimal intranet UI | Done | FastAPI-served single-page UI for summary, agents, alerts, cases, tasks, and indicator hunt |
+| M1.19 | Fidelis exact lookup parity | Done | Added tenant-scoped `get_alert_by_id` and `get_exact_event` admin APIs |
 
 ## Work log
 
@@ -91,3 +92,4 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 - 2026-06-10: Added real Windows Service runtime entrypoint using `golang.org/x/sys/windows/svc`; console mode still works. Service stop/shutdown requests signal the agent loop to exit cleanly. Tests, Windows cross-build, and smoke pass.
 - 2026-06-10: Formalized `GOAL.md`: intranet-first EDR/MDR V1, one Windows agent, central server, reverse-proxy-friendly queued jobs, Fidelis API parity, threat hunting, and minimal UI. Multi-tenant expansion remains future-safe through tenant-aware schema.
 - 2026-06-10: Added minimal FastAPI-served intranet UI at `/ui` with dashboard summary, agents, alerts, cases, tasks, and indicator hunt. Tests/smoke pass.
+- 2026-06-10: Added Fidelis parity exact lookup APIs for alert ID and event ID with tenant scoping. Tests/smoke pass.

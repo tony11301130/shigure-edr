@@ -328,6 +328,16 @@ class SQLiteStore:
             }
         return {"tenant_id": tenant_id, "counts": counts, "agent_status": agent_status, "task_status": task_status, "case_status": case_status, "alert_severity": severity_counts}
 
+    def get_event(self, tenant_id: str, event_id: str) -> Optional[NormalizedEvent]:
+        with self.connect() as conn:
+            row = conn.execute("select event_json from events where tenant_id=? and id=?", (tenant_id, event_id)).fetchone()
+        return NormalizedEvent.model_validate_json(row["event_json"]) if row else None
+
+    def get_alert(self, tenant_id: str, alert_id: str) -> Optional[Alert]:
+        with self.connect() as conn:
+            row = conn.execute("select alert_json from alerts where tenant_id=? and alert_id=?", (tenant_id, alert_id)).fetchone()
+        return Alert.model_validate_json(row["alert_json"]) if row else None
+
     def list_events(
         self,
         tenant_id: str,

@@ -133,6 +133,13 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
     def tenant_summary(tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):
         return store.tenant_summary(tenant_id)
 
+    @app.get("/api/v1/admin/events/{event_id}", response_model=NormalizedEvent)
+    def get_event(event_id: str, tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):
+        event = store.get_event(tenant_id, event_id)
+        if not event:
+            raise HTTPException(status_code=404, detail="event_not_found")
+        return event
+
     @app.get("/api/v1/admin/events", response_model=list[NormalizedEvent])
     def list_events(
         _admin=Depends(_admin_auth),
@@ -150,6 +157,13 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
     @app.get("/api/v1/admin/tasks", response_model=list[TaskRecord])
     def list_tasks(tenant_id: str = Query("default"), agent_id: Optional[str] = None, limit: int = 100, _admin=Depends(_admin_auth)):
         return store.list_tasks(tenant_id, agent_id=agent_id, limit=limit)
+
+    @app.get("/api/v1/admin/alerts/{alert_id}", response_model=Alert)
+    def get_alert(alert_id: str, tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):
+        alert = store.get_alert(tenant_id, alert_id)
+        if not alert:
+            raise HTTPException(status_code=404, detail="alert_not_found")
+        return alert
 
     @app.get("/api/v1/admin/alerts", response_model=list[Alert])
     def list_alerts(tenant_id: str = Query("default"), limit: int = 100, _admin=Depends(_admin_auth)):
