@@ -19,7 +19,7 @@ import (
 var ErrBlocked = errors.New("blocked_by_policy")
 
 var Allowed = map[string]bool{
-	"inventory": true, "process_list": true, "network_connections": true, "service_list": true, "scheduled_tasks": true, "file_exists": true, "file_hash": true,
+	"inventory": true, "process_list": true, "network_connections": true, "service_list": true, "scheduled_tasks": true, "windows_event_logs": true, "file_exists": true, "file_hash": true,
 }
 
 func Execute(taskType string, args map[string]any) (map[string]any, error) {
@@ -37,6 +37,8 @@ func Execute(taskType string, args map[string]any) (map[string]any, error) {
 		return map[string]any{"services": serviceList()}, nil
 	case "scheduled_tasks":
 		return map[string]any{"scheduled_tasks": scheduledTasks()}, nil
+	case "windows_event_logs":
+		return windowsEventLogs(args)
 	case "file_exists":
 		path, _ := args["path"].(string)
 		if path == "" {
@@ -142,6 +144,40 @@ func scheduledTasks() []map[string]any {
 		}
 	}
 	return out
+}
+
+func windowsEventLogs(args map[string]any) (map[string]any, error) {
+	profile, _ := args["profile"].(string)
+	if profile == "" {
+		profile = "powershell"
+	}
+	maxEvents := intArg(args, "max_events", 25)
+	if maxEvents <= 0 {
+		maxEvents = 25
+	}
+	if maxEvents > 100 {
+		maxEvents = 100
+	}
+	return platformWindowsEventLogs(profile, maxEvents)
+}
+
+func intArg(args map[string]any, key string, fallback int) int {
+	v, ok := args[key]
+	if !ok {
+		return fallback
+	}
+	switch t := v.(type) {
+	case int:
+		return t
+	case float64:
+		return int(t)
+	case string:
+		i, err := strconv.Atoi(t)
+		if err == nil {
+			return i
+		}
+	}
+	return fallback
 }
 
 func hashFile(path string) (string, error) {

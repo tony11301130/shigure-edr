@@ -54,3 +54,21 @@ func TestInventoryTask(t *testing.T) {
 		t.Fatalf("expected inventory, got %#v", res)
 	}
 }
+
+func TestWindowsEventLogsTaskUsesAllowlistedProfiles(t *testing.T) {
+	res, err := Execute("windows_event_logs", map[string]any{"profile": "powershell", "max_events": 500})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res["profile"] != "powershell" {
+		t.Fatalf("expected powershell profile, got %#v", res)
+	}
+
+	blocked, err := Execute("windows_event_logs", map[string]any{"profile": "arbitrary-log"})
+	if !errors.Is(err, ErrBlocked) {
+		t.Fatalf("expected ErrBlocked for unsupported profile, got %v", err)
+	}
+	if blocked["blocked"] != true {
+		t.Fatalf("expected blocked result, got %#v", blocked)
+	}
+}
