@@ -135,8 +135,8 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
         return {"rules_loaded": len(app.state.custom_rules)}
 
     @app.get("/api/v1/admin/agents")
-    def list_agents(tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):
-        return {"agents": store.list_agents(tenant_id)}
+    def list_agents(tenant_id: str = Query("default"), status: Optional[str] = None, _admin=Depends(_admin_auth)):
+        return {"agents": store.list_agents(tenant_id, status=status)}
 
     @app.get("/api/v1/admin/agents/{agent_id}", response_model=AgentRecord)
     def get_agent(agent_id: str, tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):

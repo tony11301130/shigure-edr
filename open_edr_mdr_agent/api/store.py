@@ -369,9 +369,15 @@ class SQLiteStore:
                 )
         return len(expired)
 
-    def list_agents(self, tenant_id: str) -> List[Dict[str, Any]]:
+    def list_agents(self, tenant_id: str, status: Optional[str] = None) -> List[Dict[str, Any]]:
+        q = "select * from agents where tenant_id=?"
+        args: list[Any] = [tenant_id]
+        if status:
+            q += " and status=?"
+            args.append(status)
+        q += " order by host"
         with self.connect() as conn:
-            return [dict(r) for r in conn.execute("select * from agents where tenant_id=? order by host", (tenant_id,)).fetchall()]
+            return [dict(r) for r in conn.execute(q, args).fetchall()]
 
     def get_agent(self, tenant_id: str, agent_id: str) -> Optional[Dict[str, Any]]:
         with self.connect() as conn:

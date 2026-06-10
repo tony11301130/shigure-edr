@@ -58,6 +58,7 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 | M1.20 | Read-only script catalog parity | Done | Added `list_readonly_scripts` catalog and server-side allowlist for task creation |
 | M1.21 | Fidelis query/context parity | Done | Added count/related events plus behavior-context and network-context investigation APIs |
 | M1.22 | Saved hunt workflow | Done | Saved hunts can be created, listed, executed, and reviewed with run results |
+| M1.23 | Agent status filtering | Done | Agent list API can filter by online/offline status for operations work queues |
 | M1.23 | Read-only task argument validation | Done | Server validates catalog args before queueing tasks, including required paths and allowlisted Windows Event Log profiles |
 | M1.24 | Saved hunt lifecycle controls | Done | Saved hunts can be updated/disabled, filtered by enabled state, and disabled hunts cannot be run |
 | M1.25 | Task timeout maintenance | Done | Admin maintenance endpoint marks stale claimed tasks as timed_out with explicit timeout error |
@@ -77,6 +78,7 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 | M1.39 | Alert title filter | Done | Alert listing supports title substring search for triage and quick lookup |
 | M1.40 | Raw evidence hash lookup | Done | Raw evidence can be fetched by SHA256 as well as raw_ref |
 | M1.41 | Related file event lookup | Done | Related-events API can pivot on file_path for file evidence investigation |
+| M1.42 | Agent status filter | Done | Agent listing supports online/offline status filters for endpoint health queues |
 
 ## Work log
 
@@ -118,6 +120,7 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 - 2026-06-10: Added read-only task/script catalog API and server-side task allowlist enforcement to match Fidelis `list_readonly_scripts` / safe `run_readonly_script` workflow. Tests/smoke pass.
 - 2026-06-10: Added Fidelis parity query/context APIs: event count, related events, behavior context, and network context. Tests, Windows cross-build, and smoke pass.
 - 2026-06-10: Added saved hunt workflow for threat hunting: create/list hunts, execute against events/alerts, and persist hunt run results. Tests, Windows cross-build, and smoke pass.
+- 2026-06-10: Added agent status filtering to the admin agent list for online/offline operational queues. Tests, Windows cross-build, and smoke pass.
 - 2026-06-10: Added server-side read-only task argument validation so unsafe/malformed task requests are rejected before endpoints claim them. Tests, Windows cross-build, and smoke pass.
 - 2026-06-10: Added saved hunt lifecycle controls: patch/update hunts, filter enabled hunts, and block disabled hunt execution. Tests, Windows cross-build, and smoke pass.
 - 2026-06-10: Added task timeout maintenance so claimed tasks that exceed their timeout can be marked `timed_out` server-side. Tests, Windows cross-build, and smoke pass.
@@ -137,3 +140,4 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 - 2026-06-10: Added alert title substring filter for quick triage lookup. Tests, Windows cross-build, and smoke pass.
 - 2026-06-10: Added raw evidence lookup by SHA256 for hash-first evidence workflows. Tests, Windows cross-build, and smoke pass.
 - 2026-06-10: Added file_path pivot support to related-events investigation API. Tests, Windows cross-build, and smoke pass.
+- 2026-06-10: Added agent status filter for endpoint health queues. Tests, Windows cross-build, and smoke pass.
