@@ -27,8 +27,8 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 
 | ID | Milestone | Status | Notes |
 |---|---|---|---|
-| M0.0 | Repo/version control/progress tracking | In progress | Initialize git and progress log |
-| M0.1 | Backend API + SQLite store | Pending | enrollment, heartbeat, ingest, task claim/result, query |
+| M0.0 | Repo/version control/progress tracking | Done | Git initialized on `main`; progress log created |
+| M0.1 | Backend API + SQLite store | Done | FastAPI + SQLite: enrollment, heartbeat, ingest, detection alert insert, task claim/result, query |
 | M0.2 | Go agent skeleton | Pending | service-ready loop, config, enrollment, heartbeat, upload, task polling |
 | M0.3 | Read-only task execution | Pending | inventory, process list, net connections, services, scheduled tasks, file exists/hash |
 | M0.4 | Minimal telemetry collectors | Pending | process command line, parent PID, network, DNS/event-log hooks where available |
@@ -40,3 +40,5 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 
 - 2026-06-10: Created initial project skeleton, spec, schemas, local JSON provider, CLI, sample smoke test.
 - 2026-06-10: Updated spec through grill decisions: single agent, Windows-first, Go agent, server-side detection, hybrid upload, polling tasks, 10k platform multi-tenant target, intranet-first development.
+- 2026-06-10: Initialized git repository and committed initial spec/prototype.
+- 2026-06-10: Implemented M0.1 backend API with SQLite store and minimal server-side detection. Added integration test for enroll → heartbeat → ingest → alert → task → result.
