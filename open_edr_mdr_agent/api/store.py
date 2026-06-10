@@ -148,7 +148,9 @@ class SQLiteStore:
                     completed_at text,
                     timeout_seconds integer not null,
                     result_json text,
-                    error text
+                    error text,
+                    raw_ref text,
+                    raw_hash text
                 );
                 create index if not exists idx_tasks_agent_status on tasks(tenant_id, agent_id, status);
                 """
@@ -157,6 +159,8 @@ class SQLiteStore:
             self._ensure_column(conn, "events", "raw_hash", "text")
             self._ensure_column(conn, "alerts", "raw_ref", "text")
             self._ensure_column(conn, "alerts", "raw_hash", "text")
+            self._ensure_column(conn, "tasks", "raw_ref", "text")
+            self._ensure_column(conn, "tasks", "raw_hash", "text")
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, ddl_type: str) -> None:
         cols = {row["name"] for row in conn.execute(f"pragma table_info({table})").fetchall()}
@@ -292,10 +296,16 @@ class SQLiteStore:
         return [self._task_record({**dict(r), "status": "claimed", "claimed_at": now}) for r in rows]
 
     def complete_task(self, tenant_id: str, agent_id: str, task_id: str, status: str, result: Dict[str, Any], error: Optional[str]) -> None:
+        raw_payload = {"task_id": task_id, "agent_id": agent_id, "status": status, "result": result, "error": error}
+        raw_ref, raw_hash, payload_json = self._raw_evidence_values(tenant_id, "task_result", task_id, raw_payload)
         with self.connect() as conn:
             conn.execute(
-                "update tasks set status=?, completed_at=?, result_json=?, error=? where tenant_id=? and agent_id=? and task_id=?",
-                (status, utc_now(), json.dumps(result), error, tenant_id, agent_id, task_id),
+                "insert or ignore into raw_evidence(raw_ref, tenant_id, kind, sha256, payload_json, created_at) values (?, ?, ?, ?, ?, ?)",
+                (raw_ref, tenant_id, "task_result", raw_hash, payload_json, utc_now()),
+            )
+            conn.execute(
+                "update tasks set status=?, completed_at=?, result_json=?, error=?, raw_ref=?, raw_hash=? where tenant_id=? and agent_id=? and task_id=?",
+                (status, utc_now(), json.dumps(result), error, raw_ref, raw_hash, tenant_id, agent_id, task_id),
             )
 
     def list_agents(self, tenant_id: str) -> List[Dict[str, Any]]:
@@ -462,5 +472,5 @@ class SQLiteStore:
             args=json.loads(row["args_json"] or "{}"), status=row["status"], created_at=datetime.fromisoformat(row["created_at"]),
             claimed_at=datetime.fromisoformat(row["claimed_at"]) if row.get("claimed_at") else None,
             completed_at=datetime.fromisoformat(row["completed_at"]) if row.get("completed_at") else None,
-            result=json.loads(row["result_json"]) if row.get("result_json") else None, error=row.get("error"),
+            result=json.loads(row["result_json"]) if row.get("result_json") else None, error=row.get("error"), raw_ref=row.get("raw_ref"), raw_hash=row.get("raw_hash"),
         )

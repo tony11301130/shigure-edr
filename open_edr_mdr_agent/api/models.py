@@ -88,6 +88,8 @@ class TaskRecord(BaseModel):
     completed_at: Optional[datetime] = None
     result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+    raw_ref: Optional[str] = None
+    raw_hash: Optional[str] = None
 
 
 class TaskClaimResponse(BaseModel):

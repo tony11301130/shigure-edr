@@ -48,6 +48,7 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 | M1.10 | Windows Event Log detections | Done | Built-in detections for suspicious PowerShell script blocks, service install, and scheduled task changes |
 | M1.11 | Collector policy gates | Done | Tenant config can independently enable/disable process, network, and Windows Event Log collectors |
 | M1.12 | Windows Event Log evidence task | Done | Read-only `windows_event_logs` task with allowlisted profiles for PowerShell/auth/service/task logs |
+| M1.13 | Task result evidence hashing | Done | Completed task results now get raw_ref/raw_hash and are stored in raw_evidence |
 
 ## Work log
 
@@ -79,3 +80,4 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 - 2026-06-10: Added built-in server-side detections for Windows Event Log telemetry: suspicious PowerShell script block content, service installation, and scheduled task changes. Tests/smoke pass.
 - 2026-06-10: Added per-collector policy gates in tenant config and Go agent runtime apply path. Process, network, and Windows Event Log collectors can be toggled independently. Tests/smoke pass.
 - 2026-06-10: Added read-only `windows_event_logs` task with fixed allowlisted profiles (`powershell`, `auth`, `service`, `task`) and max event clamp. Tests/smoke pass.
+- 2026-06-10: Added raw evidence hashing/references for completed task results so MDR evidence can be traced and attached to cases. Tests/smoke pass.

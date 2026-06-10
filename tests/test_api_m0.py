@@ -85,3 +85,8 @@ def test_m0_enroll_ingest_detect_task_loop(tmp_path):
     tasks = client.get(f"/api/v1/admin/tasks?tenant_id=default&agent_id={agent_id}", headers={"Authorization":"Bearer dev-admin-token"}).json()
     assert tasks[0]["task_id"] == task_id
     assert tasks[0]["status"] == "succeeded"
+    assert tasks[0]["raw_ref"]
+    assert tasks[0]["raw_hash"]
+    task_raw = client.get("/api/v1/admin/raw-evidence", headers={"Authorization":"Bearer dev-admin-token"}, params={"tenant_id":"default", "raw_ref": tasks[0]["raw_ref"]})
+    assert task_raw.status_code == 200
+    assert task_raw.json()["kind"] == "task_result"
