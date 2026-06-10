@@ -7,6 +7,7 @@ from typing import Annotated, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 
+from open_edr_mdr_agent.api.cases import CaseCreateRequest, CaseEvidenceRecord, CaseEvidenceRequest, CaseRecord, CaseUpdateRequest
 from open_edr_mdr_agent.api.models import (
     AgentConfig,
     AgentRecord,
@@ -147,6 +148,38 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
         if not evidence:
             raise HTTPException(status_code=404, detail="raw_evidence_not_found")
         return evidence
+
+    @app.post("/api/v1/admin/cases", response_model=CaseRecord)
+    def create_case(req: CaseCreateRequest, _admin=Depends(_admin_auth)):
+        try:
+            return store.create_case(req.tenant_id, req.title, req.severity, alert_id=req.alert_id, description=req.description)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/v1/admin/cases", response_model=list[CaseRecord])
+    def list_cases(tenant_id: str = "default", status: Optional[str] = None, limit: int = 100, _admin=Depends(_admin_auth)):
+        return store.list_cases(tenant_id, status=status, limit=limit)
+
+    @app.get("/api/v1/admin/cases/{case_id}")
+    def get_case(case_id: str, tenant_id: str = "default", _admin=Depends(_admin_auth)):
+        case = store.get_case(tenant_id, case_id)
+        if not case:
+            raise HTTPException(status_code=404, detail="case_not_found")
+        return {"case": case, "evidence": store.list_case_evidence(tenant_id, case_id)}
+
+    @app.patch("/api/v1/admin/cases/{case_id}", response_model=CaseRecord)
+    def update_case(case_id: str, req: CaseUpdateRequest, tenant_id: str = "default", _admin=Depends(_admin_auth)):
+        case = store.update_case(tenant_id, case_id, status=req.status, assignee=req.assignee, summary=req.summary)
+        if not case:
+            raise HTTPException(status_code=404, detail="case_not_found")
+        return case
+
+    @app.post("/api/v1/admin/cases/{case_id}/evidence", response_model=CaseEvidenceRecord)
+    def add_case_evidence(case_id: str, req: CaseEvidenceRequest, tenant_id: str = "default", _admin=Depends(_admin_auth)):
+        try:
+            return store.add_case_evidence(tenant_id, case_id, req.evidence_type, req.ref_id, req.summary, req.data)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.get("/api/v1/admin/config", response_model=AgentConfig)
     def get_config(tenant_id: str = "default", _admin=Depends(_admin_auth)):

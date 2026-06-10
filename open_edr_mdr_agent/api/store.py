@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 from uuid import uuid4
 
+from open_edr_mdr_agent.api.cases import CaseEvidenceRecord, CaseRecord
 from open_edr_mdr_agent.api.models import AgentConfig, AgentRecord, TaskRecord
 from open_edr_mdr_agent.core.schemas import Alert, NormalizedEvent
 
@@ -104,6 +105,31 @@ class SQLiteStore:
                     alert_json text not null
                 );
                 create index if not exists idx_alerts_tenant_time on alerts(tenant_id, timestamp);
+                create table if not exists cases (
+                    case_id text primary key,
+                    tenant_id text not null,
+                    title text not null,
+                    severity text not null,
+                    status text not null,
+                    alert_id text,
+                    assignee text,
+                    description text,
+                    summary text,
+                    created_at text not null,
+                    updated_at text not null
+                );
+                create index if not exists idx_cases_tenant_status on cases(tenant_id, status, updated_at);
+                create table if not exists case_evidence (
+                    evidence_id text primary key,
+                    case_id text not null,
+                    tenant_id text not null,
+                    evidence_type text not null,
+                    ref_id text not null,
+                    summary text,
+                    data_json text not null,
+                    created_at text not null
+                );
+                create index if not exists idx_case_evidence_case on case_evidence(tenant_id, case_id, created_at);
                 create table if not exists tenant_configs (
                     tenant_id text primary key,
                     version integer not null,
@@ -302,6 +328,66 @@ class SQLiteStore:
         with self.connect() as conn:
             return [NormalizedEvent.model_validate_json(r["event_json"]) for r in conn.execute(q, args).fetchall()]
 
+    def create_case(self, tenant_id: str, title: str, severity: str, alert_id: Optional[str] = None, description: Optional[str] = None) -> CaseRecord:
+        case_id = str(uuid4())
+        now = utc_now()
+        with self.connect() as conn:
+            if alert_id:
+                alert = conn.execute("select alert_id from alerts where tenant_id=? and alert_id=?", (tenant_id, alert_id)).fetchone()
+                if not alert:
+                    raise ValueError("alert_not_found_in_tenant")
+            conn.execute(
+                "insert into cases(case_id, tenant_id, title, severity, status, alert_id, description, created_at, updated_at) values (?, ?, ?, ?, 'open', ?, ?, ?, ?)",
+                (case_id, tenant_id, title, severity, alert_id, description, now, now),
+            )
+            row = conn.execute("select * from cases where case_id=?", (case_id,)).fetchone()
+        return self._case_record(dict(row))
+
+    def list_cases(self, tenant_id: str, status: Optional[str] = None, limit: int = 100) -> List[CaseRecord]:
+        q = "select * from cases where tenant_id=?"
+        args: list[Any] = [tenant_id]
+        if status:
+            q += " and status=?"
+            args.append(status)
+        q += " order by updated_at desc limit ?"
+        args.append(limit)
+        with self.connect() as conn:
+            return [self._case_record(dict(r)) for r in conn.execute(q, args).fetchall()]
+
+    def get_case(self, tenant_id: str, case_id: str) -> Optional[CaseRecord]:
+        with self.connect() as conn:
+            row = conn.execute("select * from cases where tenant_id=? and case_id=?", (tenant_id, case_id)).fetchone()
+        return self._case_record(dict(row)) if row else None
+
+    def update_case(self, tenant_id: str, case_id: str, status: Optional[str] = None, assignee: Optional[str] = None, summary: Optional[str] = None) -> Optional[CaseRecord]:
+        current = self.get_case(tenant_id, case_id)
+        if not current:
+            return None
+        with self.connect() as conn:
+            conn.execute(
+                "update cases set status=coalesce(?, status), assignee=coalesce(?, assignee), summary=coalesce(?, summary), updated_at=? where tenant_id=? and case_id=?",
+                (status, assignee, summary, utc_now(), tenant_id, case_id),
+            )
+            row = conn.execute("select * from cases where tenant_id=? and case_id=?", (tenant_id, case_id)).fetchone()
+        return self._case_record(dict(row))
+
+    def add_case_evidence(self, tenant_id: str, case_id: str, evidence_type: str, ref_id: str, summary: Optional[str], data: Dict[str, Any]) -> CaseEvidenceRecord:
+        if not self.get_case(tenant_id, case_id):
+            raise ValueError("case_not_found_in_tenant")
+        evidence_id = str(uuid4())
+        now = utc_now()
+        with self.connect() as conn:
+            conn.execute(
+                "insert into case_evidence(evidence_id, case_id, tenant_id, evidence_type, ref_id, summary, data_json, created_at) values (?, ?, ?, ?, ?, ?, ?, ?)",
+                (evidence_id, case_id, tenant_id, evidence_type, ref_id, summary, json.dumps(data), now),
+            )
+            row = conn.execute("select * from case_evidence where evidence_id=?", (evidence_id,)).fetchone()
+        return self._case_evidence_record(dict(row))
+
+    def list_case_evidence(self, tenant_id: str, case_id: str) -> List[CaseEvidenceRecord]:
+        with self.connect() as conn:
+            return [self._case_evidence_record(dict(r)) for r in conn.execute("select * from case_evidence where tenant_id=? and case_id=? order by created_at", (tenant_id, case_id)).fetchall()]
+
     def get_raw_evidence(self, tenant_id: str, raw_ref: str) -> Optional[Dict[str, Any]]:
         with self.connect() as conn:
             row = conn.execute("select * from raw_evidence where tenant_id=? and raw_ref=?", (tenant_id, raw_ref)).fetchone()
@@ -339,6 +425,19 @@ class SQLiteStore:
         with self.connect() as conn:
             row = conn.execute("select count(*) c from tasks where tenant_id=? and agent_id=? and status='queued'", (tenant_id, agent_id)).fetchone()
             return int(row["c"])
+
+    def _case_record(self, row: Dict[str, Any]) -> CaseRecord:
+        return CaseRecord(
+            case_id=row["case_id"], tenant_id=row["tenant_id"], title=row["title"], severity=row["severity"], status=row["status"],
+            alert_id=row.get("alert_id"), assignee=row.get("assignee"), description=row.get("description"), summary=row.get("summary"),
+            created_at=datetime.fromisoformat(row["created_at"]), updated_at=datetime.fromisoformat(row["updated_at"]),
+        )
+
+    def _case_evidence_record(self, row: Dict[str, Any]) -> CaseEvidenceRecord:
+        return CaseEvidenceRecord(
+            evidence_id=row["evidence_id"], case_id=row["case_id"], tenant_id=row["tenant_id"], evidence_type=row["evidence_type"], ref_id=row["ref_id"],
+            summary=row.get("summary"), data=json.loads(row["data_json"] or "{}"), created_at=datetime.fromisoformat(row["created_at"]),
+        )
 
     def _raw_evidence_values(self, tenant_id: str, kind: str, object_id: str, payload: Dict[str, Any]) -> tuple[str, str, str]:
         payload_json = json.dumps(payload or {}, sort_keys=True, separators=(",", ":"), default=str)
