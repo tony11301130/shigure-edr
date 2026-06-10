@@ -26,7 +26,7 @@ from open_edr_mdr_agent.api.models import (
     TaskResultRequest,
 )
 from open_edr_mdr_agent.api.store import SQLiteStore
-from open_edr_mdr_agent.api.task_catalog import READONLY_TASK_CATALOG
+from open_edr_mdr_agent.api.task_catalog import READONLY_TASK_CATALOG, TaskArgumentError, validate_task_args
 from open_edr_mdr_agent.core.detection import detect_many
 from open_edr_mdr_agent.core.rules import load_rules
 from open_edr_mdr_agent.core.schemas import Alert, NormalizedEvent, Severity, Source
@@ -117,11 +117,11 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
 
     @app.post("/api/v1/admin/tasks", response_model=TaskRecord)
     def create_task(req: TaskCreateRequest, _admin=Depends(_admin_auth)):
-        allowed_task_types = {task["task_type"] for task in READONLY_TASK_CATALOG}
-        if req.task_type not in allowed_task_types:
-            raise HTTPException(status_code=400, detail="task_not_readonly_allowlisted")
         try:
+            validate_task_args(req.task_type, req.args)
             task_id = store.create_task(req.tenant_id, req.agent_id, req.task_type, req.args, req.timeout_seconds)
+        except TaskArgumentError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         # Fetch via direct SQLite row to avoid adding public store method for now.

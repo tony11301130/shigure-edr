@@ -58,6 +58,7 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 | M1.20 | Read-only script catalog parity | Done | Added `list_readonly_scripts` catalog and server-side allowlist for task creation |
 | M1.21 | Fidelis query/context parity | Done | Added count/related events plus behavior-context and network-context investigation APIs |
 | M1.22 | Saved hunt workflow | Done | Saved hunts can be created, listed, executed, and reviewed with run results |
+| M1.23 | Read-only task argument validation | Done | Server validates catalog args before queueing tasks, including required paths and allowlisted Windows Event Log profiles |
 
 ## Work log
 
@@ -99,3 +100,4 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 - 2026-06-10: Added read-only task/script catalog API and server-side task allowlist enforcement to match Fidelis `list_readonly_scripts` / safe `run_readonly_script` workflow. Tests/smoke pass.
 - 2026-06-10: Added Fidelis parity query/context APIs: event count, related events, behavior context, and network context. Tests, Windows cross-build, and smoke pass.
 - 2026-06-10: Added saved hunt workflow for threat hunting: create/list hunts, execute against events/alerts, and persist hunt run results. Tests, Windows cross-build, and smoke pass.
+- 2026-06-10: Added server-side read-only task argument validation so unsafe/malformed task requests are rejected before endpoints claim them. Tests, Windows cross-build, and smoke pass.

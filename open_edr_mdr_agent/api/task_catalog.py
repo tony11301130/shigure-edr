@@ -3,6 +3,12 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 
+class TaskArgumentError(ValueError):
+    """Raised when a queued read-only task does not match its catalog schema."""
+
+
+
+
 READONLY_TASK_CATALOG: List[Dict[str, Any]] = [
     {
         "task_type": "inventory",
@@ -61,3 +67,33 @@ READONLY_TASK_CATALOG: List[Dict[str, Any]] = [
         "args_schema": {"path": {"type": "string", "required": True}},
     },
 ]
+
+
+def validate_task_args(task_type: str, args: Dict[str, Any]) -> None:
+    """Validate analyst-supplied task args against the read-only task catalog.
+
+    This intentionally supports only the tiny schema vocabulary V1 uses today.
+    The server must reject unsafe/unknown profiles before work reaches endpoints.
+    """
+    entry = next((item for item in READONLY_TASK_CATALOG if item["task_type"] == task_type), None)
+    if not entry:
+        raise TaskArgumentError("task_not_readonly_allowlisted")
+    schema = entry.get("args_schema") or {}
+    args = args or {}
+    for name, spec in schema.items():
+        if spec.get("required") and (name not in args or args.get(name) in (None, "")):
+            raise TaskArgumentError(f"task_arg_{name}_required")
+        if name not in args:
+            continue
+        value = args[name]
+        if spec.get("type") == "string" and not isinstance(value, str):
+            raise TaskArgumentError(f"task_arg_{name}_invalid")
+        if spec.get("type") == "integer":
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise TaskArgumentError(f"task_arg_{name}_invalid")
+            if "minimum" in spec and value < spec["minimum"]:
+                raise TaskArgumentError(f"task_arg_{name}_invalid")
+            if "maximum" in spec and value > spec["maximum"]:
+                raise TaskArgumentError(f"task_arg_{name}_invalid")
+        if "enum" in spec and value not in spec["enum"]:
+            raise TaskArgumentError(f"task_arg_{name}_invalid")
