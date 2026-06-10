@@ -32,3 +32,8 @@ def test_event_query_supports_user_and_sha256_dimensions(tmp_path):
     related = client.get("/api/v1/admin/events/related", headers=ADMIN, params={"tenant_id": "default", "entity_type": "hash_sha256", "value": sha256})
     assert related.status_code == 200
     assert len(related.json()) == 1
+
+    by_file = client.get("/api/v1/admin/events/related", headers=ADMIN, params={"tenant_id": "default", "entity_type": "file_path", "value": "C:/Temp/a.exe"})
+    assert by_file.status_code == 200
+    assert len(by_file.json()) == 1
+    assert by_file.json()[0]["file_path"] == "C:/Temp/a.exe"

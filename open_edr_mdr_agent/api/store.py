@@ -431,13 +431,17 @@ class SQLiteStore:
             "remote_ip": "remote_ip",
             "domain": "domain",
             "command_line": "command_line",
+            "file_path": "event_json",
         }
         field = field_map.get(entity_type)
         if not field:
             return []
-        if field in {"process_name", "command_line", "user"}:
-            q = f"select event_json from events where tenant_id=? and {field} like ? order by timestamp desc limit ?"
+        if field == "event_json":
+            q = "select event_json from events where tenant_id=? and event_json like ? order by timestamp desc limit ?"
             args: list[Any] = [tenant_id, f"%{value}%", limit]
+        elif field in {"process_name", "command_line", "user"}:
+            q = f"select event_json from events where tenant_id=? and {field} like ? order by timestamp desc limit ?"
+            args = [tenant_id, f"%{value}%", limit]
         else:
             q = f"select event_json from events where tenant_id=? and {field}=? order by timestamp desc limit ?"
             args = [tenant_id, value, limit]
