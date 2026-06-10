@@ -60,3 +60,13 @@ def test_m0_enroll_ingest_detect_task_loop(tmp_path):
     events = client.get("/api/v1/admin/events?tenant_id=default&host=POS01").json()
     assert len(events) == 1
     assert events[0]["tenant_id"] == "default"
+
+    hunted = client.get("/api/v1/admin/events?tenant_id=default&indicator=SQBFAFgA").json()
+    assert len(hunted) == 1
+
+    process_events = client.get("/api/v1/admin/events?tenant_id=default&event_type=process_start&process_name=powershell").json()
+    assert len(process_events) == 1
+
+    tasks = client.get(f"/api/v1/admin/tasks?tenant_id=default&agent_id={agent_id}").json()
+    assert tasks[0]["task_id"] == task_id
+    assert tasks[0]["status"] == "succeeded"

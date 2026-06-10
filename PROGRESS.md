@@ -33,7 +33,7 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 | M0.3 | Read-only task execution | Partial | inventory, process_list, network_connections, file_exists, file_hash implemented; Windows-native services/scheduled tasks pending |
 | M0.4 | Minimal telemetry collectors | Partial | Cross-platform snapshot collector sends process command line/parent PID and basic network snapshot; Windows ETW/Event Log collectors pending |
 | M0.5 | Server-side detection | Pending | suspicious PowerShell, script+network, service/task, IOC, telemetry gap |
-| M0.6 | MDR query/evidence workflow | Pending | recent events, alerts, task result evidence |
+| M0.6 | MDR query/evidence workflow | Partial | Admin APIs list agents/events/alerts/tasks; event filters include host/type/process/remote_ip/domain/indicator |
 | M0.7 | Local integration smoke test | Pending | one simulated/real agent end-to-end |
 
 ## Work log
@@ -45,3 +45,4 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 - 2026-06-10: Implemented Go agent skeleton with enrollment, heartbeat, demo suspicious event upload, polling task claim, and allowlisted read-only task execution. Local E2E against FastAPI backend succeeded: alert generated and `process_list` task completed.
 - 2026-06-10: Added agent JSONL offline spool for event batches and task results; verified E2E still succeeds with `file_exists` task.
 - 2026-06-10: Added limited process/network telemetry snapshot collector and wired it into the agent loop. Verified Go tests, Python tests, build, and live upload against local backend.
+- 2026-06-10: Added MDR query filters for events and task list endpoint; tests cover indicator hunt, process query, and task result evidence.

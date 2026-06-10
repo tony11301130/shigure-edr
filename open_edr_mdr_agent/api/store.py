@@ -201,16 +201,52 @@ class SQLiteStore:
         with self.connect() as conn:
             return [dict(r) for r in conn.execute("select * from agents where tenant_id=? order by host", (tenant_id,)).fetchall()]
 
-    def list_events(self, tenant_id: str, host: Optional[str] = None, limit: int = 100) -> List[NormalizedEvent]:
+    def list_events(
+        self,
+        tenant_id: str,
+        host: Optional[str] = None,
+        event_type: Optional[str] = None,
+        process_name: Optional[str] = None,
+        remote_ip: Optional[str] = None,
+        domain: Optional[str] = None,
+        indicator: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[NormalizedEvent]:
         q = "select event_json from events where tenant_id=?"
         args: list[Any] = [tenant_id]
         if host:
             q += " and host=?"
             args.append(host)
+        if event_type:
+            q += " and event_type=?"
+            args.append(event_type)
+        if process_name:
+            q += " and process_name like ?"
+            args.append(f"%{process_name}%")
+        if remote_ip:
+            q += " and remote_ip=?"
+            args.append(remote_ip)
+        if domain:
+            q += " and domain=?"
+            args.append(domain)
+        if indicator:
+            q += " and event_json like ?"
+            args.append(f"%{indicator}%")
         q += " order by timestamp desc limit ?"
         args.append(limit)
         with self.connect() as conn:
             return [NormalizedEvent.model_validate_json(r["event_json"]) for r in conn.execute(q, args).fetchall()]
+
+    def list_tasks(self, tenant_id: str, agent_id: Optional[str] = None, limit: int = 100) -> List[TaskRecord]:
+        q = "select * from tasks where tenant_id=?"
+        args: list[Any] = [tenant_id]
+        if agent_id:
+            q += " and agent_id=?"
+            args.append(agent_id)
+        q += " order by created_at desc limit ?"
+        args.append(limit)
+        with self.connect() as conn:
+            return [self._task_record(dict(r)) for r in conn.execute(q, args).fetchall()]
 
     def list_alerts(self, tenant_id: str, limit: int = 100) -> List[Alert]:
         with self.connect() as conn:

@@ -106,8 +106,21 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
         return {"agents": store.list_agents(tenant_id)}
 
     @app.get("/api/v1/admin/events", response_model=list[NormalizedEvent])
-    def list_events(tenant_id: str = Query("default"), host: Optional[str] = None, limit: int = 100):
-        return store.list_events(tenant_id, host=host, limit=limit)
+    def list_events(
+        tenant_id: str = Query("default"),
+        host: Optional[str] = None,
+        event_type: Optional[str] = None,
+        process_name: Optional[str] = None,
+        remote_ip: Optional[str] = None,
+        domain: Optional[str] = None,
+        indicator: Optional[str] = None,
+        limit: int = 100,
+    ):
+        return store.list_events(tenant_id, host=host, event_type=event_type, process_name=process_name, remote_ip=remote_ip, domain=domain, indicator=indicator, limit=limit)
+
+    @app.get("/api/v1/admin/tasks", response_model=list[TaskRecord])
+    def list_tasks(tenant_id: str = Query("default"), agent_id: Optional[str] = None, limit: int = 100):
+        return store.list_tasks(tenant_id, agent_id=agent_id, limit=limit)
 
     @app.get("/api/v1/admin/alerts", response_model=list[Alert])
     def list_alerts(tenant_id: str = Query("default"), limit: int = 100):
