@@ -67,6 +67,7 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 | M1.29 | Event query user/hash dimensions | Done | Event storage/query supports user and SHA256 hash filters with migration guard |
 | M1.30 | UI hunt/evidence panels | Done | Minimal intranet UI now surfaces saved hunts and raw evidence references alongside cases/tasks |
 | M1.31 | Intranet deployment runbook | Done | Added V1 deployment checklist for server, Windows agent, analyst validation, and safety boundaries |
+| M1.32 | Alert severity/host filters | Done | Alert listing supports tenant-scoped severity and host filters for triage queues |
 
 ## Work log
 
@@ -117,3 +118,4 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 - 2026-06-10: Added user and SHA256 event query dimensions plus migration guard for legacy SQLite event tables. Tests, Windows cross-build, and smoke pass.
 - 2026-06-10: Added saved hunt and raw evidence reference panels to the minimal intranet UI. Tests, Windows cross-build, and smoke pass.
 - 2026-06-10: Added intranet V1 deployment runbook covering server startup, Windows agent service install, validation checks, and read-only response boundaries. Tests, Windows cross-build, and smoke pass.
+- 2026-06-10: Added alert severity and host filters for MDR triage queues. Tests, Windows cross-build, and smoke pass.

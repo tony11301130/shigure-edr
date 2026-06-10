@@ -637,9 +637,19 @@ class SQLiteStore:
             row = conn.execute("select * from tasks where tenant_id=? and task_id=?", (tenant_id, task_id)).fetchone()
         return self._task_record(dict(row)) if row else None
 
-    def list_alerts(self, tenant_id: str, limit: int = 100) -> List[Alert]:
+    def list_alerts(self, tenant_id: str, limit: int = 100, severity: Optional[str] = None, host: Optional[str] = None) -> List[Alert]:
+        q = "select alert_json from alerts where tenant_id=?"
+        args: list[Any] = [tenant_id]
+        if severity:
+            q += " and severity=?"
+            args.append(severity)
+        if host:
+            q += " and host=?"
+            args.append(host)
+        q += " order by timestamp desc limit ?"
+        args.append(limit)
         with self.connect() as conn:
-            return [Alert.model_validate_json(r["alert_json"]) for r in conn.execute("select alert_json from alerts where tenant_id=? order by timestamp desc limit ?", (tenant_id, limit)).fetchall()]
+            return [Alert.model_validate_json(r["alert_json"]) for r in conn.execute(q, args).fetchall()]
 
     def stale_agents(self, stale_before_iso: str, tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
         q = "select * from agents where last_seen < ?"
