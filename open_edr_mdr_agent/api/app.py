@@ -156,11 +156,13 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
         host: Optional[str] = None,
         event_type: Optional[str] = None,
         process_name: Optional[str] = None,
+        user: Optional[str] = None,
+        hash_sha256: Optional[str] = None,
         remote_ip: Optional[str] = None,
         domain: Optional[str] = None,
         indicator: Optional[str] = None,
     ):
-        return {"tenant_id": tenant_id, "count": store.count_events(tenant_id, host=host, event_type=event_type, process_name=process_name, remote_ip=remote_ip, domain=domain, indicator=indicator)}
+        return {"tenant_id": tenant_id, "count": store.count_events(tenant_id, host=host, event_type=event_type, process_name=process_name, user=user, hash_sha256=hash_sha256, remote_ip=remote_ip, domain=domain, indicator=indicator)}
 
     @app.get("/api/v1/admin/events/related", response_model=list[NormalizedEvent])
     def related_events(entity_type: str, value: str, tenant_id: str = Query("default"), limit: int = 100, _admin=Depends(_admin_auth)):
@@ -180,12 +182,14 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
         host: Optional[str] = None,
         event_type: Optional[str] = None,
         process_name: Optional[str] = None,
+        user: Optional[str] = None,
+        hash_sha256: Optional[str] = None,
         remote_ip: Optional[str] = None,
         domain: Optional[str] = None,
         indicator: Optional[str] = None,
         limit: int = 100,
     ):
-        return store.list_events(tenant_id, host=host, event_type=event_type, process_name=process_name, remote_ip=remote_ip, domain=domain, indicator=indicator, limit=limit)
+        return store.list_events(tenant_id, host=host, event_type=event_type, process_name=process_name, user=user, hash_sha256=hash_sha256, remote_ip=remote_ip, domain=domain, indicator=indicator, limit=limit)
 
     @app.get("/api/v1/admin/tasks", response_model=list[TaskRecord])
     def list_tasks(tenant_id: str = Query("default"), agent_id: Optional[str] = None, limit: int = 100, _admin=Depends(_admin_auth)):
@@ -273,6 +277,8 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
             host=query.get("host"),
             event_type=query.get("event_type"),
             process_name=query.get("process_name"),
+            user=query.get("user"),
+            hash_sha256=query.get("hash_sha256"),
             remote_ip=query.get("remote_ip"),
             domain=query.get("domain"),
             indicator=indicator,

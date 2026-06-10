@@ -84,6 +84,8 @@ class SQLiteStore:
                     process_name text,
                     process_id text,
                     command_line text,
+                    user text,
+                    hash_sha256 text,
                     remote_ip text,
                     domain text,
                     raw_ref text,
@@ -177,6 +179,8 @@ class SQLiteStore:
                 create index if not exists idx_tasks_agent_status on tasks(tenant_id, agent_id, status);
                 """
             )
+            self._ensure_column(conn, "events", "user", "text")
+            self._ensure_column(conn, "events", "hash_sha256", "text")
             self._ensure_column(conn, "events", "raw_ref", "text")
             self._ensure_column(conn, "events", "raw_hash", "text")
             self._ensure_column(conn, "alerts", "raw_ref", "text")
@@ -257,14 +261,14 @@ class SQLiteStore:
             event.raw_ref = event.raw_ref or raw_ref
             event.raw_hash = event.raw_hash or raw_hash
             raw_rows.append((event.raw_ref, event.tenant_id, "event", event.raw_hash, payload, utc_now()))
-            rows.append((event.id, event.tenant_id, agent_id, event.host, event.event_type.value, event.source.value, event.timestamp.isoformat(), event.process_name, event.process_id, event.command_line, event.remote_ip, event.domain, event.raw_ref, event.raw_hash, event.model_dump_json()))
+            rows.append((event.id, event.tenant_id, agent_id, event.host, event.event_type.value, event.source.value, event.timestamp.isoformat(), event.process_name, event.process_id, event.command_line, event.user, event.hash_sha256, event.remote_ip, event.domain, event.raw_ref, event.raw_hash, event.model_dump_json()))
         with self.connect() as conn:
             conn.executemany(
                 "insert or ignore into raw_evidence(raw_ref, tenant_id, kind, sha256, payload_json, created_at) values (?, ?, ?, ?, ?, ?)",
                 raw_rows,
             )
             conn.executemany(
-                "insert or ignore into events(id, tenant_id, agent_id, host, event_type, source, timestamp, process_name, process_id, command_line, remote_ip, domain, raw_ref, raw_hash, event_json) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "insert or ignore into events(id, tenant_id, agent_id, host, event_type, source, timestamp, process_name, process_id, command_line, user, hash_sha256, remote_ip, domain, raw_ref, raw_hash, event_json) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
         return len(rows)
@@ -389,11 +393,13 @@ class SQLiteStore:
         host: Optional[str] = None,
         event_type: Optional[str] = None,
         process_name: Optional[str] = None,
+        user: Optional[str] = None,
+        hash_sha256: Optional[str] = None,
         remote_ip: Optional[str] = None,
         domain: Optional[str] = None,
         indicator: Optional[str] = None,
     ) -> int:
-        q, args = self._event_query("count(*) count", tenant_id, host=host, event_type=event_type, process_name=process_name, remote_ip=remote_ip, domain=domain, indicator=indicator)
+        q, args = self._event_query("count(*) count", tenant_id, host=host, event_type=event_type, process_name=process_name, user=user, hash_sha256=hash_sha256, remote_ip=remote_ip, domain=domain, indicator=indicator)
         with self.connect() as conn:
             return int(conn.execute(q, args).fetchone()["count"])
 
@@ -403,6 +409,8 @@ class SQLiteStore:
             "process_id": "process_id",
             "parent_process_id": "process_id",
             "process_name": "process_name",
+            "user": "user",
+            "hash_sha256": "hash_sha256",
             "remote_ip": "remote_ip",
             "domain": "domain",
             "command_line": "command_line",
@@ -410,7 +418,7 @@ class SQLiteStore:
         field = field_map.get(entity_type)
         if not field:
             return []
-        if field in {"process_name", "command_line"}:
+        if field in {"process_name", "command_line", "user"}:
             q = f"select event_json from events where tenant_id=? and {field} like ? order by timestamp desc limit ?"
             args: list[Any] = [tenant_id, f"%{value}%", limit]
         else:
@@ -425,12 +433,14 @@ class SQLiteStore:
         host: Optional[str] = None,
         event_type: Optional[str] = None,
         process_name: Optional[str] = None,
+        user: Optional[str] = None,
+        hash_sha256: Optional[str] = None,
         remote_ip: Optional[str] = None,
         domain: Optional[str] = None,
         indicator: Optional[str] = None,
         limit: int = 100,
     ) -> List[NormalizedEvent]:
-        q, args = self._event_query("event_json", tenant_id, host=host, event_type=event_type, process_name=process_name, remote_ip=remote_ip, domain=domain, indicator=indicator)
+        q, args = self._event_query("event_json", tenant_id, host=host, event_type=event_type, process_name=process_name, user=user, hash_sha256=hash_sha256, remote_ip=remote_ip, domain=domain, indicator=indicator)
         q += " order by timestamp desc limit ?"
         args.append(limit)
         with self.connect() as conn:
@@ -645,7 +655,7 @@ class SQLiteStore:
             row = conn.execute("select count(*) c from tasks where tenant_id=? and agent_id=? and status='queued'", (tenant_id, agent_id)).fetchone()
             return int(row["c"])
 
-    def _event_query(self, select: str, tenant_id: str, host: Optional[str] = None, event_type: Optional[str] = None, process_name: Optional[str] = None, remote_ip: Optional[str] = None, domain: Optional[str] = None, indicator: Optional[str] = None) -> tuple[str, list[Any]]:
+    def _event_query(self, select: str, tenant_id: str, host: Optional[str] = None, event_type: Optional[str] = None, process_name: Optional[str] = None, user: Optional[str] = None, hash_sha256: Optional[str] = None, remote_ip: Optional[str] = None, domain: Optional[str] = None, indicator: Optional[str] = None) -> tuple[str, list[Any]]:
         q = f"select {select} from events where tenant_id=?"
         args: list[Any] = [tenant_id]
         if host:
@@ -657,6 +667,12 @@ class SQLiteStore:
         if process_name:
             q += " and process_name like ?"
             args.append(f"%{process_name}%")
+        if user:
+            q += " and user like ?"
+            args.append(f"%{user}%")
+        if hash_sha256:
+            q += " and hash_sha256=?"
+            args.append(hash_sha256)
         if remote_ip:
             q += " and remote_ip=?"
             args.append(remote_ip)
