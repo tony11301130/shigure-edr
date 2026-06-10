@@ -40,6 +40,7 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 | M1.2 | Detection rule loader | Done | YAML rule loader with equals/contains/regex conditions; backend can load/reload custom rules |
 | M1.3 | MDR case/evidence workflow | Done | Cases can be created from alerts, updated, and linked to event/task/raw evidence refs |
 | M1.4 | Load simulator | Done | `scripts/load_sim.py` simulates enrollment/heartbeat/ingest/detection; small local run validated |
+| M1.5 | Platform telemetry collector split | Done | OS-specific collector interface; Linux /proc implementation; Windows PowerShell/CIM read-only snapshot path cross-builds |
 
 ## Work log
 
@@ -63,3 +64,4 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 - 2026-06-10: Added YAML detection rule loader and custom rule execution path. Example rule file added; tests and smoke pass.
 - 2026-06-10: Added MDR case/evidence SQLite tables and APIs. Tests cover alert-to-case, evidence attachment, and case update workflow.
 - 2026-06-10: Added load simulator and docs. Local validation: 25 agents, 50 events, 25 alerts in ~0.7s.
+- 2026-06-10: Split telemetry collector into OS-specific files. Added Windows process/network snapshot collector using fixed read-only PowerShell/CIM commands as interim path before ETW/API collectors. `GOOS=windows GOARCH=amd64 go build` passes.
