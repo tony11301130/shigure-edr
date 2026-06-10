@@ -184,6 +184,10 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
     def list_tasks(tenant_id: str = Query("default"), agent_id: Optional[str] = None, limit: int = 100, _admin=Depends(_admin_auth)):
         return store.list_tasks(tenant_id, agent_id=agent_id, limit=limit)
 
+    @app.post("/api/v1/admin/tasks/expire-stale")
+    def expire_stale_tasks(tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):
+        return {"tenant_id": tenant_id, "expired": store.expire_stale_tasks(tenant_id)}
+
     @app.get("/api/v1/admin/alerts/{alert_id}", response_model=Alert)
     def get_alert(alert_id: str, tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):
         alert = store.get_alert(tenant_id, alert_id)

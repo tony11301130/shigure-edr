@@ -330,6 +330,24 @@ class SQLiteStore:
                 (status, utc_now(), json.dumps(result), error, raw_ref, raw_hash, tenant_id, agent_id, task_id),
             )
 
+    def expire_stale_tasks(self, tenant_id: str) -> int:
+        now = datetime.now(timezone.utc)
+        expired: list[str] = []
+        with self.connect() as conn:
+            rows = conn.execute("select task_id, claimed_at, timeout_seconds from tasks where tenant_id=? and status='claimed'", (tenant_id,)).fetchall()
+            for row in rows:
+                if not row["claimed_at"]:
+                    continue
+                claimed_at = datetime.fromisoformat(row["claimed_at"].replace("Z", "+00:00"))
+                if (now - claimed_at).total_seconds() >= int(row["timeout_seconds"]):
+                    expired.append(row["task_id"])
+            if expired:
+                conn.executemany(
+                    "update tasks set status='timed_out', completed_at=?, error='task_claim_timeout' where tenant_id=? and task_id=?",
+                    [(utc_now(), tenant_id, task_id) for task_id in expired],
+                )
+        return len(expired)
+
     def list_agents(self, tenant_id: str) -> List[Dict[str, Any]]:
         with self.connect() as conn:
             return [dict(r) for r in conn.execute("select * from agents where tenant_id=? order by host", (tenant_id,)).fetchall()]
