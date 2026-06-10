@@ -69,6 +69,20 @@ Run the automated M0 backend+agent smoke test:
 scripts/m0_smoke.sh
 ```
 
+Build the Windows agent and install it as the single branded endpoint service:
+
+```powershell
+# Cross-build from Linux dev host
+GOOS=windows GOARCH=amd64 go build -o open-edr-agent.exe ./agent/cmd/open-edr-agent
+
+# On Windows as Administrator
+.\open-edr-agent.exe --install-service --server https://edr.example.local --enroll-token <tenant-token>
+sc.exe start OpenEDRMDRAgent
+
+# Remove service if needed
+.\open-edr-agent.exe --uninstall-service
+```
+
 If you do not want a venv, you can also run with `PYTHONPATH=.`:
 
 ```bash

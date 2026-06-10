@@ -29,7 +29,26 @@ func main() {
 	collectSnapshot := flag.Bool("collect-snapshot", true, "send limited process/network telemetry snapshot each cycle")
 	maxSnapshotEvents := flag.Int("max-snapshot-events", 25, "maximum snapshot telemetry events per cycle")
 	interval := flag.Duration("interval", 15*time.Second, "fallback loop interval before backend config is received")
+	installSvc := flag.Bool("install-service", false, "install as Windows service and exit")
+	uninstallSvc := flag.Bool("uninstall-service", false, "uninstall Windows service and exit")
+	serviceName := flag.String("service-name", "OpenEDRMDRAgent", "Windows service name")
+	serviceDisplayName := flag.String("service-display-name", "Open EDR MDR Agent", "Windows service display name")
 	flag.Parse()
+
+	if *installSvc {
+		if err := installService(*serviceName, *serviceDisplayName, *server, *enrollToken, *statePath, *spoolPath); err != nil {
+			log.Fatalf("install service failed: %v", err)
+		}
+		log.Printf("service installed: %s", *serviceName)
+		return
+	}
+	if *uninstallSvc {
+		if err := uninstallService(*serviceName); err != nil {
+			log.Fatalf("uninstall service failed: %v", err)
+		}
+		log.Printf("service uninstalled: %s", *serviceName)
+		return
+	}
 
 	client := agentapi.New(*server)
 	agentState, err := state.Load(*statePath)
