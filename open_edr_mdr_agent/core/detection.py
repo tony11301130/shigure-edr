@@ -36,9 +36,19 @@ SUSPICIOUS_SERVICE_TASK = DetectionRule(
     mitre=("T1053", "T1543"),
 )
 
+IOC_MATCH = DetectionRule(
+    rule_id="builtin.ioc.match",
+    title="Known bad indicator match",
+    severity=Severity.HIGH,
+    mitre=("T1204",),
+)
+
 SCRIPT_NAMES = {"powershell.exe", "pwsh.exe", "cmd.exe", "wscript.exe", "cscript.exe", "mshta.exe", "rundll32.exe", "regsvr32.exe"}
 ENCODED_RE = re.compile(r"(?i)(-|/)(enc|encodedcommand|e)\b")
 SERVICE_TASK_RE = re.compile(r"(?i)\b(schtasks|new-scheduledtask|create-service|new-service|sc\.exe\s+create)\b")
+BUILTIN_BAD_IPS = {"203.0.113.10"}  # Documentation TEST-NET value used as a safe built-in smoke-test IOC.
+BUILTIN_BAD_DOMAINS = {"malicious.example"}
+BUILTIN_BAD_HASHES = {"0" * 64}
 
 
 def detect_event(event: NormalizedEvent) -> List[Alert]:
@@ -55,6 +65,9 @@ def detect_event(event: NormalizedEvent) -> List[Alert]:
     if event.event_type == EventType.NETWORK_CONNECTION and proc in SCRIPT_NAMES:
         alerts.append(_alert_from_event(event, SCRIPT_NETWORK, f"{event.process_name} connected to {event.remote_ip}:{event.remote_port}"))
 
+    if _ioc_hit(event):
+        alerts.append(_alert_from_event(event, IOC_MATCH, f"IOC match in event {event.id}"))
+
     return alerts
 
 
@@ -63,6 +76,15 @@ def detect_many(events: Iterable[NormalizedEvent]) -> List[Alert]:
     for event in events:
         alerts.extend(detect_event(event))
     return alerts
+
+
+def _ioc_hit(event: NormalizedEvent) -> bool:
+    return bool(
+        (event.remote_ip and event.remote_ip in BUILTIN_BAD_IPS)
+        or (event.domain and event.domain.lower() in BUILTIN_BAD_DOMAINS)
+        or (event.hash_sha256 and event.hash_sha256.lower() in BUILTIN_BAD_HASHES)
+        or (event.hash_md5 and event.hash_md5.lower() in BUILTIN_BAD_HASHES)
+    )
 
 
 def _alert_from_event(event: NormalizedEvent, rule: DetectionRule, description: Optional[str]) -> Alert:
