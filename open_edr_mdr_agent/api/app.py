@@ -120,6 +120,10 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
     def list_agents(tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):
         return {"agents": store.list_agents(tenant_id)}
 
+    @app.get("/api/v1/admin/summary")
+    def tenant_summary(tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):
+        return store.tenant_summary(tenant_id)
+
     @app.get("/api/v1/admin/events", response_model=list[NormalizedEvent])
     def list_events(
         _admin=Depends(_admin_auth),

@@ -312,6 +312,22 @@ class SQLiteStore:
         with self.connect() as conn:
             return [dict(r) for r in conn.execute("select * from agents where tenant_id=? order by host", (tenant_id,)).fetchall()]
 
+    def tenant_summary(self, tenant_id: str) -> Dict[str, Any]:
+        with self.connect() as conn:
+            agent_status = {r["status"]: r["count"] for r in conn.execute("select status, count(*) count from agents where tenant_id=? group by status", (tenant_id,)).fetchall()}
+            task_status = {r["status"]: r["count"] for r in conn.execute("select status, count(*) count from tasks where tenant_id=? group by status", (tenant_id,)).fetchall()}
+            case_status = {r["status"]: r["count"] for r in conn.execute("select status, count(*) count from cases where tenant_id=? group by status", (tenant_id,)).fetchall()}
+            severity_counts = {r["severity"]: r["count"] for r in conn.execute("select severity, count(*) count from alerts where tenant_id=? group by severity", (tenant_id,)).fetchall()}
+            counts = {
+                "agents": conn.execute("select count(*) count from agents where tenant_id=?", (tenant_id,)).fetchone()["count"],
+                "events": conn.execute("select count(*) count from events where tenant_id=?", (tenant_id,)).fetchone()["count"],
+                "alerts": conn.execute("select count(*) count from alerts where tenant_id=?", (tenant_id,)).fetchone()["count"],
+                "cases": conn.execute("select count(*) count from cases where tenant_id=?", (tenant_id,)).fetchone()["count"],
+                "tasks": conn.execute("select count(*) count from tasks where tenant_id=?", (tenant_id,)).fetchone()["count"],
+                "raw_evidence": conn.execute("select count(*) count from raw_evidence where tenant_id=?", (tenant_id,)).fetchone()["count"],
+            }
+        return {"tenant_id": tenant_id, "counts": counts, "agent_status": agent_status, "task_status": task_status, "case_status": case_status, "alert_severity": severity_counts}
+
     def list_events(
         self,
         tenant_id: str,

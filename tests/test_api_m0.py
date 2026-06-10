@@ -90,3 +90,10 @@ def test_m0_enroll_ingest_detect_task_loop(tmp_path):
     task_raw = client.get("/api/v1/admin/raw-evidence", headers={"Authorization":"Bearer dev-admin-token"}, params={"tenant_id":"default", "raw_ref": tasks[0]["raw_ref"]})
     assert task_raw.status_code == 200
     assert task_raw.json()["kind"] == "task_result"
+
+    summary = client.get("/api/v1/admin/summary?tenant_id=default", headers={"Authorization":"Bearer dev-admin-token"})
+    assert summary.status_code == 200
+    assert summary.json()["counts"]["agents"] == 1
+    assert summary.json()["counts"]["events"] == 1
+    assert summary.json()["counts"]["alerts"] == 1
+    assert summary.json()["task_status"]["succeeded"] == 1

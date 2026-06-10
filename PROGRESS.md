@@ -50,6 +50,7 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 | M1.12 | Windows Event Log evidence task | Done | Read-only `windows_event_logs` task with allowlisted profiles for PowerShell/auth/service/task logs |
 | M1.13 | Task result evidence hashing | Done | Completed task results now get raw_ref/raw_hash and are stored in raw_evidence |
 | M1.14 | Alert-to-case auto evidence | Done | Creating a case from an alert auto-attaches the alert and alert raw evidence refs |
+| M1.15 | Tenant operational summary API | Done | Admin summary endpoint reports counts and status/severity distributions for agents/events/alerts/cases/tasks/evidence |
 
 ## Work log
 
@@ -83,3 +84,4 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 - 2026-06-10: Added read-only `windows_event_logs` task with fixed allowlisted profiles (`powershell`, `auth`, `service`, `task`) and max event clamp. Tests/smoke pass.
 - 2026-06-10: Added raw evidence hashing/references for completed task results so MDR evidence can be traced and attached to cases. Tests/smoke pass.
 - 2026-06-10: Creating a case from an alert now automatically attaches the alert and alert raw evidence as case evidence. Tests/smoke pass.
+- 2026-06-10: Added `/api/v1/admin/summary` with tenant-scoped operational counts and status/severity distributions. Tests/smoke pass.
