@@ -45,6 +45,7 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 | M1.7 | MDR investigation APIs | Done | Endpoint context, indicator hunt, and process-chain APIs over current event/alert/task store |
 | M1.8 | SQLite schema migration guard | Done | Startup adds new raw_ref/raw_hash columns to legacy M0 tables; regression test added |
 | M1.9 | Windows Event Log telemetry snapshot | Done | Read-only Get-WinEvent collector for PowerShell, auth, service install, scheduled task operational logs |
+| M1.10 | Windows Event Log detections | Done | Built-in detections for suspicious PowerShell script blocks, service install, and scheduled task changes |
 
 ## Work log
 
@@ -73,3 +74,4 @@ Build the M0 intranet-first, single-agent Windows EDR vertical slice while keepi
 - 2026-06-10: Added MDR investigation APIs for endpoint context, indicator hunt, and process-chain lookup. `pytest`, Go tests, Windows cross-build, and smoke pass.
 - 2026-06-10: Added lightweight SQLite migration guard for new event/alert raw evidence columns so legacy M0 DBs continue working.
 - 2026-06-10: Added Windows Event Log snapshot collector using fixed read-only Get-WinEvent queries for PowerShell 4103/4104, Security 4624/4625/4648, service install 7045, and Task Scheduler operational events. `pytest`, Go tests, Windows cross-build, and smoke pass.
+- 2026-06-10: Added built-in server-side detections for Windows Event Log telemetry: suspicious PowerShell script block content, service installation, and scheduled task changes. Tests/smoke pass.

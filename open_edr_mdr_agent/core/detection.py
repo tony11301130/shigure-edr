@@ -38,6 +38,27 @@ SUSPICIOUS_SERVICE_TASK = DetectionRule(
     mitre=("T1053", "T1543"),
 )
 
+POWERSHELL_SCRIPTBLOCK = DetectionRule(
+    rule_id="builtin.windows.powershell.scriptblock_suspicious",
+    title="Suspicious PowerShell script block",
+    severity=Severity.HIGH,
+    mitre=("T1059.001",),
+)
+
+WINDOWS_SERVICE_INSTALLED = DetectionRule(
+    rule_id="builtin.windows.service.installed",
+    title="Windows service installed",
+    severity=Severity.MEDIUM,
+    mitre=("T1543.003",),
+)
+
+WINDOWS_SCHEDULED_TASK_CHANGE = DetectionRule(
+    rule_id="builtin.windows.scheduled_task.changed",
+    title="Windows scheduled task changed",
+    severity=Severity.MEDIUM,
+    mitre=("T1053.005",),
+)
+
 IOC_MATCH = DetectionRule(
     rule_id="builtin.ioc.match",
     title="Known bad indicator match",
@@ -48,6 +69,7 @@ IOC_MATCH = DetectionRule(
 SCRIPT_NAMES = {"powershell.exe", "pwsh.exe", "cmd.exe", "wscript.exe", "cscript.exe", "mshta.exe", "rundll32.exe", "regsvr32.exe"}
 ENCODED_RE = re.compile(r"(?i)(-|/)(enc|encodedcommand|e)\b")
 SERVICE_TASK_RE = re.compile(r"(?i)\b(schtasks|new-scheduledtask|create-service|new-service|sc\.exe\s+create)\b")
+PS_SCRIPTBLOCK_RE = re.compile(r"(?i)\b(frombase64string|downloadstring|downloadfile|invoke-webrequest|iwr\b|invoke-expression|iex\b|new-object\s+net\.webclient|add-mppreference|set-mppreference|amsiutils|bypass)\b")
 BUILTIN_BAD_IPS = {"203.0.113.10"}  # Documentation TEST-NET value used as a safe built-in smoke-test IOC.
 BUILTIN_BAD_DOMAINS = {"malicious.example"}
 BUILTIN_BAD_HASHES = {"0" * 64}
@@ -67,6 +89,15 @@ def detect_event(event: NormalizedEvent, custom_rules: Optional[Iterable[Generic
     if event.event_type == EventType.NETWORK_CONNECTION and proc in SCRIPT_NAMES:
         alerts.append(_alert_from_event(event, SCRIPT_NETWORK, f"{event.process_name} connected to {event.remote_ip}:{event.remote_port}"))
 
+    if _is_windows_event_log(event, "powershell_operational") and PS_SCRIPTBLOCK_RE.search(cmd + " " + str((event.raw or {}).get("message") or "")):
+        alerts.append(_alert_from_event(event, POWERSHELL_SCRIPTBLOCK, _truncate(cmd or str((event.raw or {}).get("message") or ""))))
+
+    if _is_windows_event_log(event, "service_control_manager"):
+        alerts.append(_alert_from_event(event, WINDOWS_SERVICE_INSTALLED, _truncate(str((event.raw or {}).get("message") or "Windows service install event"))))
+
+    if _is_windows_event_log(event, "task_scheduler"):
+        alerts.append(_alert_from_event(event, WINDOWS_SCHEDULED_TASK_CHANGE, _truncate(str((event.raw or {}).get("message") or "Windows scheduled task event"))))
+
     if _ioc_hit(event):
         alerts.append(_alert_from_event(event, IOC_MATCH, f"IOC match in event {event.id}"))
 
@@ -81,6 +112,15 @@ def detect_many(events: Iterable[NormalizedEvent], custom_rules: Optional[Iterab
     for event in events:
         alerts.extend(detect_event(event, custom_rules=custom_rules))
     return alerts
+
+
+def _is_windows_event_log(event: NormalizedEvent, query: str) -> bool:
+    raw = event.raw or {}
+    return raw.get("collector") == "windows_event_log" and raw.get("query") == query
+
+
+def _truncate(value: str, limit: int = 500) -> str:
+    return value if len(value) <= limit else value[:limit]
 
 
 def _ioc_hit(event: NormalizedEvent) -> bool:
