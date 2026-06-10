@@ -338,8 +338,8 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/api/v1/admin/cases", response_model=list[CaseRecord])
-    def list_cases(tenant_id: str = "default", status: Optional[str] = None, limit: int = 100, _admin=Depends(_admin_auth)):
-        return store.list_cases(tenant_id, status=status, limit=limit)
+    def list_cases(tenant_id: str = "default", status: Optional[str] = None, severity: Optional[str] = None, assignee: Optional[str] = None, limit: int = 100, _admin=Depends(_admin_auth)):
+        return store.list_cases(tenant_id, status=status, severity=severity, assignee=assignee, limit=limit)
 
     @app.get("/api/v1/admin/cases/{case_id}")
     def get_case(case_id: str, tenant_id: str = "default", _admin=Depends(_admin_auth)):

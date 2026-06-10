@@ -556,12 +556,18 @@ class SQLiteStore:
         with self.connect() as conn:
             return [self._hunt_run_record(dict(r)) for r in conn.execute(q, args).fetchall()]
 
-    def list_cases(self, tenant_id: str, status: Optional[str] = None, limit: int = 100) -> List[CaseRecord]:
+    def list_cases(self, tenant_id: str, status: Optional[str] = None, severity: Optional[str] = None, assignee: Optional[str] = None, limit: int = 100) -> List[CaseRecord]:
         q = "select * from cases where tenant_id=?"
         args: list[Any] = [tenant_id]
         if status:
             q += " and status=?"
             args.append(status)
+        if severity:
+            q += " and severity=?"
+            args.append(severity)
+        if assignee:
+            q += " and assignee=?"
+            args.append(assignee)
         q += " order by updated_at desc limit ?"
         args.append(limit)
         with self.connect() as conn:
