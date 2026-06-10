@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import secrets
 import sqlite3
@@ -61,6 +62,15 @@ class SQLiteStore:
                     metadata_json text not null default '{}'
                 );
                 create index if not exists idx_agents_tenant on agents(tenant_id);
+                create table if not exists raw_evidence (
+                    raw_ref text primary key,
+                    tenant_id text not null,
+                    kind text not null,
+                    sha256 text not null,
+                    payload_json text not null,
+                    created_at text not null
+                );
+                create index if not exists idx_raw_evidence_tenant on raw_evidence(tenant_id, created_at);
                 create table if not exists events (
                     id text primary key,
                     tenant_id text not null,
@@ -74,6 +84,8 @@ class SQLiteStore:
                     command_line text,
                     remote_ip text,
                     domain text,
+                    raw_ref text,
+                    raw_hash text,
                     event_json text not null
                 );
                 create index if not exists idx_events_tenant_time on events(tenant_id, timestamp);
@@ -87,6 +99,8 @@ class SQLiteStore:
                     host text,
                     user text,
                     process_name text,
+                    raw_ref text,
+                    raw_hash text,
                     alert_json text not null
                 );
                 create index if not exists idx_alerts_tenant_time on alerts(tenant_id, timestamp);
@@ -173,23 +187,45 @@ class SQLiteStore:
 
     def insert_events(self, agent_id: str, events: Iterable[NormalizedEvent]) -> int:
         rows = []
+        raw_rows = []
+        now_dt = datetime.now(timezone.utc)
         for event in events:
-            rows.append((event.id, event.tenant_id, agent_id, event.host, event.event_type.value, event.source.value, event.timestamp.isoformat(), event.process_name, event.process_id, event.command_line, event.remote_ip, event.domain, event.model_dump_json()))
+            event.ingested_at = event.ingested_at or now_dt
+            raw_ref, raw_hash, payload = self._raw_evidence_values(event.tenant_id, "event", event.id, event.raw)
+            event.raw_ref = event.raw_ref or raw_ref
+            event.raw_hash = event.raw_hash or raw_hash
+            raw_rows.append((event.raw_ref, event.tenant_id, "event", event.raw_hash, payload, utc_now()))
+            rows.append((event.id, event.tenant_id, agent_id, event.host, event.event_type.value, event.source.value, event.timestamp.isoformat(), event.process_name, event.process_id, event.command_line, event.remote_ip, event.domain, event.raw_ref, event.raw_hash, event.model_dump_json()))
         with self.connect() as conn:
             conn.executemany(
-                "insert or ignore into events(id, tenant_id, agent_id, host, event_type, source, timestamp, process_name, process_id, command_line, remote_ip, domain, event_json) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "insert or ignore into raw_evidence(raw_ref, tenant_id, kind, sha256, payload_json, created_at) values (?, ?, ?, ?, ?, ?)",
+                raw_rows,
+            )
+            conn.executemany(
+                "insert or ignore into events(id, tenant_id, agent_id, host, event_type, source, timestamp, process_name, process_id, command_line, remote_ip, domain, raw_ref, raw_hash, event_json) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
         return len(rows)
 
     def insert_alerts(self, alerts: Iterable[Alert]) -> int:
         rows = []
+        raw_rows = []
+        now_dt = datetime.now(timezone.utc)
         for alert in alerts:
             tenant_id = str((alert.raw or {}).get("tenant_id") or "default")
-            rows.append((alert.alert_id, tenant_id, alert.title, alert.severity.value, alert.timestamp.isoformat(), alert.host, alert.user, alert.process_name, alert.model_dump_json()))
+            alert.created_at = alert.created_at or now_dt
+            raw_ref, raw_hash, payload = self._raw_evidence_values(tenant_id, "alert", alert.alert_id, alert.raw)
+            alert.raw_ref = alert.raw_ref or raw_ref
+            alert.raw_hash = alert.raw_hash or raw_hash
+            raw_rows.append((alert.raw_ref, tenant_id, "alert", alert.raw_hash, payload, utc_now()))
+            rows.append((alert.alert_id, tenant_id, alert.title, alert.severity.value, alert.timestamp.isoformat(), alert.host, alert.user, alert.process_name, alert.raw_ref, alert.raw_hash, alert.model_dump_json()))
         with self.connect() as conn:
             conn.executemany(
-                "insert or ignore into alerts(alert_id, tenant_id, title, severity, timestamp, host, user, process_name, alert_json) values (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "insert or ignore into raw_evidence(raw_ref, tenant_id, kind, sha256, payload_json, created_at) values (?, ?, ?, ?, ?, ?)",
+                raw_rows,
+            )
+            conn.executemany(
+                "insert or ignore into alerts(alert_id, tenant_id, title, severity, timestamp, host, user, process_name, raw_ref, raw_hash, alert_json) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
         return len(rows)
@@ -266,6 +302,15 @@ class SQLiteStore:
         with self.connect() as conn:
             return [NormalizedEvent.model_validate_json(r["event_json"]) for r in conn.execute(q, args).fetchall()]
 
+    def get_raw_evidence(self, tenant_id: str, raw_ref: str) -> Optional[Dict[str, Any]]:
+        with self.connect() as conn:
+            row = conn.execute("select * from raw_evidence where tenant_id=? and raw_ref=?", (tenant_id, raw_ref)).fetchone()
+        if not row:
+            return None
+        data = dict(row)
+        data["payload"] = json.loads(data.pop("payload_json"))
+        return data
+
     def list_tasks(self, tenant_id: str, agent_id: Optional[str] = None, limit: int = 100) -> List[TaskRecord]:
         q = "select * from tasks where tenant_id=?"
         args: list[Any] = [tenant_id]
@@ -294,6 +339,13 @@ class SQLiteStore:
         with self.connect() as conn:
             row = conn.execute("select count(*) c from tasks where tenant_id=? and agent_id=? and status='queued'", (tenant_id, agent_id)).fetchone()
             return int(row["c"])
+
+    def _raw_evidence_values(self, tenant_id: str, kind: str, object_id: str, payload: Dict[str, Any]) -> tuple[str, str, str]:
+        payload_json = json.dumps(payload or {}, sort_keys=True, separators=(",", ":"), default=str)
+        raw_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+        safe_object_id = str(object_id).replace("/", "_").replace(":", "_")
+        raw_ref = f"sqlite://raw_evidence/{tenant_id}/{kind}/{safe_object_id}/{raw_hash[:16]}"
+        return raw_ref, raw_hash, payload_json
 
     def _task_record(self, row: Dict[str, Any]) -> TaskRecord:
         return TaskRecord(

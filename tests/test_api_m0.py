@@ -48,6 +48,8 @@ def test_m0_enroll_ingest_detect_task_loop(tmp_path):
     assert len(alerts) == 1
     assert alerts[0]["title"] == "Suspicious encoded PowerShell command"
     assert alerts[0]["raw"]["tenant_id"] == "default"
+    assert alerts[0]["raw_ref"]
+    assert alerts[0]["raw_hash"]
 
     task = client.post("/api/v1/admin/tasks", headers={"Authorization":"Bearer dev-admin-token"}, json={"tenant_id": "default", "agent_id": agent_id, "task_type": "process_list", "args": {}})
     assert task.status_code == 200, task.text
@@ -66,6 +68,11 @@ def test_m0_enroll_ingest_detect_task_loop(tmp_path):
     events = client.get("/api/v1/admin/events?tenant_id=default&host=POS01", headers={"Authorization":"Bearer dev-admin-token"}).json()
     assert len(events) == 1
     assert events[0]["tenant_id"] == "default"
+    assert events[0]["raw_ref"]
+    assert events[0]["raw_hash"]
+    raw = client.get("/api/v1/admin/raw-evidence", headers={"Authorization":"Bearer dev-admin-token"}, params={"tenant_id":"default", "raw_ref": events[0]["raw_ref"]})
+    assert raw.status_code == 200
+    assert raw.json()["sha256"] == events[0]["raw_hash"]
 
     hunted = client.get("/api/v1/admin/events?tenant_id=default&indicator=SQBFAFgA", headers={"Authorization":"Bearer dev-admin-token"}).json()
     assert len(hunted) == 1

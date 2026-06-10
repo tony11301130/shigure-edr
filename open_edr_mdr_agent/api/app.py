@@ -134,6 +134,13 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
     def list_alerts(tenant_id: str = Query("default"), limit: int = 100, _admin=Depends(_admin_auth)):
         return store.list_alerts(tenant_id, limit=limit)
 
+    @app.get("/api/v1/admin/raw-evidence")
+    def get_raw_evidence(raw_ref: str, tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):
+        evidence = store.get_raw_evidence(tenant_id, raw_ref)
+        if not evidence:
+            raise HTTPException(status_code=404, detail="raw_evidence_not_found")
+        return evidence
+
     @app.get("/api/v1/admin/config", response_model=AgentConfig)
     def get_config(tenant_id: str = "default", _admin=Depends(_admin_auth)):
         return store.get_agent_config(tenant_id)

@@ -45,7 +45,9 @@ class NormalizedEvent(BaseModel):
     source: Source
     event_type: EventType = EventType.GENERIC
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    ingested_at: Optional[datetime] = None
     tenant_id: str = "default"
+    source_event_id: Optional[str] = None
     host: Optional[str] = None
     ip_address: Optional[str] = None
     user: Optional[str] = None
@@ -64,6 +66,8 @@ class NormalizedEvent(BaseModel):
     alert_title: Optional[str] = None
     severity: Severity = Severity.INFO
     mitre: List[str] = Field(default_factory=list)
+    raw_ref: Optional[str] = None
+    raw_hash: Optional[str] = None
     raw: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -84,12 +88,15 @@ class Alert(BaseModel):
     title: str
     severity: Severity = Severity.INFO
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: Optional[datetime] = None
     host: Optional[str] = None
     user: Optional[str] = None
     process_name: Optional[str] = None
     description: Optional[str] = None
     mitre: List[str] = Field(default_factory=list)
     source: Source
+    raw_ref: Optional[str] = None
+    raw_hash: Optional[str] = None
     raw: Dict[str, Any] = Field(default_factory=dict)
 
 
