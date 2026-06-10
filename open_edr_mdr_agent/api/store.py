@@ -352,14 +352,25 @@ class SQLiteStore:
         case_id = str(uuid4())
         now = utc_now()
         with self.connect() as conn:
+            alert = None
             if alert_id:
-                alert = conn.execute("select alert_id from alerts where tenant_id=? and alert_id=?", (tenant_id, alert_id)).fetchone()
+                alert = conn.execute("select alert_id, raw_ref, raw_hash, alert_json from alerts where tenant_id=? and alert_id=?", (tenant_id, alert_id)).fetchone()
                 if not alert:
                     raise ValueError("alert_not_found_in_tenant")
             conn.execute(
                 "insert into cases(case_id, tenant_id, title, severity, status, alert_id, description, created_at, updated_at) values (?, ?, ?, ?, 'open', ?, ?, ?, ?)",
                 (case_id, tenant_id, title, severity, alert_id, description, now, now),
             )
+            if alert:
+                conn.execute(
+                    "insert into case_evidence(evidence_id, case_id, tenant_id, evidence_type, ref_id, summary, data_json, created_at) values (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (str(uuid4()), case_id, tenant_id, "alert", alert["alert_id"], "Source alert", json.dumps({"raw_ref": alert["raw_ref"], "raw_hash": alert["raw_hash"]}), now),
+                )
+                if alert["raw_ref"]:
+                    conn.execute(
+                        "insert into case_evidence(evidence_id, case_id, tenant_id, evidence_type, ref_id, summary, data_json, created_at) values (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (str(uuid4()), case_id, tenant_id, "raw_evidence", alert["raw_ref"], "Source alert raw evidence", json.dumps({"kind": "alert", "sha256": alert["raw_hash"]}), now),
+                    )
             row = conn.execute("select * from cases where case_id=?", (case_id,)).fetchone()
         return self._case_record(dict(row))
 

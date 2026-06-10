@@ -37,4 +37,7 @@ def test_alert_to_case_evidence_workflow(tmp_path):
 
     fetched = client.get(f"/api/v1/admin/cases/{case['case_id']}?tenant_id=default", headers=ADMIN).json()
     assert fetched["case"]["summary"] == "Needs process tree review"
-    assert fetched["evidence"][0]["ref_id"] == ev_ref
+    evidence_refs = {(e["evidence_type"], e["ref_id"]) for e in fetched["evidence"]}
+    assert ("alert", alert_id) in evidence_refs
+    assert ("raw_evidence", alerts[0]["raw_ref"]) in evidence_refs
+    assert ("event", ev_ref) in evidence_refs
