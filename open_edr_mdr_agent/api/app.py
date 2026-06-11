@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import io
+import json
 import os
+import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from open_edr_mdr_agent.api.cases import CaseCreateRequest, CaseEvidenceRecord, CaseEvidenceRequest, CaseRecord, CaseUpdateRequest
 from open_edr_mdr_agent.api.hunts import HuntCreateRequest, HuntRecord, HuntRunRecord, HuntUpdateRequest
@@ -111,8 +114,14 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
         store.complete_task(agent["tenant_id"], agent["agent_id"], task_id, req.status, req.result, req.error)
         return {"status": "ok"}
 
+    @app.get("/api/v1/admin/task-catalog")
+    def list_task_catalog(_admin=Depends(_admin_auth)):
+        return {"tasks": READONLY_TASK_CATALOG}
+
     @app.get("/api/v1/admin/readonly-scripts")
     def list_readonly_scripts(_admin=Depends(_admin_auth)):
+        # Backward-compatible alias for older UI/tests. The catalog now includes
+        # both read-only collection tasks and explicitly dispatched response tools.
         return {"scripts": READONLY_TASK_CATALOG}
 
     @app.post("/api/v1/admin/tasks", response_model=TaskRecord)
@@ -388,23 +397,84 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
             raise HTTPException(status_code=404, detail="windows_agent_binary_not_found")
         return FileResponse(path, media_type="application/vnd.microsoft.portable-executable", filename="open-edr-agent.exe")
 
-    @app.get("/api/v1/admin/downloads/agent-config")
-    def download_agent_config(tenant_id: str = "default", server_url: str = "http://127.0.0.1:8765", max_uses: int = 1, _admin=Depends(_admin_auth)):
-        token = store.create_enrollment_token(tenant_id, max_uses=max_uses)
-        config = {
+    def _deployment_config(tenant_id: str, server_url: str, enrollment_token: str) -> dict:
+        return {
             "tenant_id": tenant_id,
             "server_url": server_url,
-            "enrollment_token": token,
+            "enrollment_token": enrollment_token,
             "agent_filename": "open-edr-agent.exe",
-            "install_command": f".\\open-edr-agent.exe --install-service --server {server_url} --enroll-token {token}",
+            "identity_file": "open-edr-scoreboard.json",
+            "install_command": f".\\open-edr-agent.exe --install-service --server {server_url} --enroll-token {enrollment_token}",
+            "package_install_command": ".\\install.ps1",
             "start_command": "sc.exe start OpenEDRMDRAgent",
+            "enrollment_model": {
+                "stage_1": "This shared enrollment token is only for first registration with the server.",
+                "stage_2": "After successful enrollment, the server issues a per-endpoint credential stored as open-edr-scoreboard.json.",
+                "stage_3": "All heartbeat, event ingest, task claim, and result upload calls use the per-endpoint credential, not the shared enrollment token.",
+            },
             "notes": [
-                "Run from an elevated PowerShell prompt on the Windows endpoint.",
+                "Run install.ps1 from an elevated PowerShell prompt on the Windows endpoint.",
                 "Endpoint traffic is outbound-only; server queues jobs and agent polls /tasks/claim.",
-                "Protect this file because it contains an enrollment token.",
+                "Protect this package because it contains an enrollment token. The token should be short-lived or limited-use in production.",
             ],
         }
+
+    @app.get("/api/v1/admin/downloads/agent-config")
+    def download_agent_config(tenant_id: str = "default", server_url: str = "http://127.0.0.1:8765", max_uses: Optional[int] = None, _admin=Depends(_admin_auth)):
+        token = store.create_enrollment_token(tenant_id, max_uses=max_uses)
+        config = _deployment_config(tenant_id, server_url, token)
         return JSONResponse(config, headers={"Content-Disposition": "attachment; filename=open-edr-agent-config.json"})
+
+    @app.get("/api/v1/admin/downloads/agent/package")
+    def download_agent_package(tenant_id: str = "default", server_url: str = "http://127.0.0.1:8765", max_uses: Optional[int] = None, _admin=Depends(_admin_auth)):
+        agent_path = Path(os.environ.get("OPEN_EDR_MDR_WINDOWS_AGENT_EXE", "/tmp/open-edr-agent.exe"))
+        if not agent_path.exists() or not agent_path.is_file():
+            raise HTTPException(status_code=404, detail="windows_agent_binary_not_found")
+        token = store.create_enrollment_token(tenant_id, max_uses=max_uses)
+        config = _deployment_config(tenant_id, server_url, token)
+        install_ps1 = """$ErrorActionPreference = \"Stop\"
+$Here = Split-Path -Parent $MyInvocation.MyCommand.Path
+$Agent = Join-Path $Here \"open-edr-agent.exe\"
+$ConfigPath = Join-Path $Here \"open-edr-agent-config.json\"
+if (!(Test-Path $Agent)) { throw \"open-edr-agent.exe not found\" }
+if (!(Test-Path $ConfigPath)) { throw \"open-edr-agent-config.json not found\" }
+$Config = Get-Content $ConfigPath -Raw | ConvertFrom-Json
+if (!$Config.server_url) { throw \"server_url missing from config\" }
+if (!$Config.enrollment_token) { throw \"enrollment_token missing from config\" }
+Write-Host \"Installing Open EDR MDR Agent for $($Config.server_url)\"
+& $Agent --install-service --server $Config.server_url --enroll-token $Config.enrollment_token
+sc.exe start OpenEDRMDRAgent
+Write-Host \"Installed. After first enrollment the agent should persist open-edr-scoreboard.json as its unique identity credential.\"
+"""
+        readme = """Open EDR MDR Agent deployment package
+
+Files:
+- open-edr-agent.exe: Windows endpoint service binary
+- open-edr-agent-config.json: shared first-enrollment config
+- install.ps1: elevated PowerShell installer
+
+Enrollment model:
+1. The config contains a shared enrollment token, similar to Fleet/osquery enroll secret.
+2. On first successful registration, the server creates the endpoint record and returns a per-endpoint credential.
+3. The endpoint stores that credential as open-edr-scoreboard.json and uses it for future authentication.
+4. The shared enrollment token should not be used as the long-term endpoint identity.
+
+Run from elevated PowerShell:
+  Set-ExecutionPolicy -Scope Process Bypass
+  .\\install.ps1
+"""
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            zf.write(agent_path, "open-edr-agent.exe")
+            zf.writestr("open-edr-agent-config.json", json.dumps(config, ensure_ascii=False, indent=2))
+            zf.writestr("install.ps1", install_ps1)
+            zf.writestr("README.txt", readme)
+        buf.seek(0)
+        return Response(
+            buf.getvalue(),
+            media_type="application/zip",
+            headers={"Content-Disposition": "attachment; filename=open-edr-agent-package.zip"},
+        )
 
     @app.get("/api/v1/admin/enrollment-tokens")
     def list_enrollment_tokens(tenant_id: str = "default", _admin=Depends(_admin_auth)):
@@ -487,66 +557,94 @@ UI_HTML = r"""
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Open EDR MDR // Intranet Console</title>
+  <title>Open EDR MDR // SOC Console</title>
   <style>
-    :root{--bg:#080b0f;--line:#263544;--text:#d8e2ec;--muted:#7f92a5;--green:#6dff9d;--amber:#ffcc66;--red:#ff6b6b;--cyan:#6bdcff;--shadow:0 18px 60px rgba(0,0,0,.42)}
-    *{box-sizing:border-box} body{margin:0;background:radial-gradient(circle at 20% 0%,#142032 0,#080b0f 32%,#05070a 100%);color:var(--text);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;min-height:100vh}
-    body:before{content:"";position:fixed;inset:0;background:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);background-size:28px 28px;mask-image:linear-gradient(to bottom,rgba(0,0,0,.7),transparent);pointer-events:none}
-    header{display:flex;align-items:center;justify-content:space-between;padding:22px 28px;border-bottom:1px solid var(--line);background:rgba(8,11,15,.86);backdrop-filter:blur(16px);position:sticky;top:0;z-index:2}
-    h1{font-size:18px;margin:0;letter-spacing:.12em;text-transform:uppercase}.mark{color:var(--green);text-shadow:0 0 18px rgba(109,255,157,.35)}
-    .controls,.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap} input,select,button{font:inherit;border:1px solid var(--line);background:#0b1118;color:var(--text);padding:10px 12px;border-radius:4px} input{min-width:190px} button{cursor:pointer;color:var(--green);border-color:#315143;background:#0d1915} button:hover{filter:brightness(1.15)} button.warn{color:var(--amber);border-color:#59451d;background:#191408}
-    main{padding:28px;display:grid;gap:18px}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:18px}.card{background:linear-gradient(180deg,rgba(19,29,40,.96),rgba(12,17,24,.96));border:1px solid var(--line);box-shadow:var(--shadow);border-radius:10px;overflow:hidden}.card h2{margin:0;padding:14px 16px;border-bottom:1px solid var(--line);font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--cyan)}.card .body{padding:14px 16px}.span3{grid-column:span 3}.span6{grid-column:span 6}.span12{grid-column:span 12}
-    .metric{font-size:34px;color:var(--green);line-height:1}.label{color:var(--muted);font-size:12px;margin-top:6px}.pill{border:1px solid var(--line);background:#0b1118;padding:4px 8px;border-radius:999px;color:var(--muted);font-size:12px}.online{color:var(--green)}.offline{color:var(--red)}.sev-high,.sev-critical{color:var(--red)}.sev-medium{color:var(--amber)}.sev-low,.sev-info{color:var(--cyan)}
-    table{width:100%;border-collapse:collapse;font-size:12px} th,td{padding:9px 8px;border-bottom:1px solid rgba(38,53,68,.72);vertical-align:top;text-align:left} th{color:var(--muted);font-weight:600;text-transform:uppercase;font-size:11px} tr:hover td{background:rgba(109,220,255,.04)} .muted{color:var(--muted)}.error{color:var(--red)}.ok{color:var(--green)} code{color:var(--green);white-space:pre-wrap}
-    @media(max-width:900px){.grid{grid-template-columns:1fr}.span3,.span6,.span12{grid-column:span 1} header{display:block}.controls{margin-top:14px} input,select{min-width:0;width:100%}}
+    :root{
+      color-scheme:dark;
+      --bg:#07090d;--panel:#0d1219;--panel2:#111923;--panel3:#151f2b;--ink:#e8eef7;--muted:#8fa0b3;--faint:#5d6f82;
+      --line:#223040;--line2:#314254;--blue:#65b7ff;--cyan:#4ee4d1;--green:#7dffa7;--amber:#ffd166;--orange:#ff9f43;--red:#ff5f6d;
+      --shadow:0 24px 70px rgba(0,0,0,.46);--radius:18px;--mono:"SFMono-Regular",Consolas,"Liberation Mono",monospace;
+      --sans:"Aptos","Segoe UI",system-ui,-apple-system,sans-serif;
+    }
+    *{box-sizing:border-box} html{scroll-behavior:smooth} body{margin:0;min-height:100vh;background:var(--bg);color:var(--ink);font-family:var(--sans);overflow-x:hidden}
+    body:before{content:"";position:fixed;inset:0;pointer-events:none;background:
+      radial-gradient(circle at 16% -10%,rgba(78,228,209,.22),transparent 28rem),radial-gradient(circle at 85% 4%,rgba(101,183,255,.16),transparent 24rem),
+      linear-gradient(135deg,rgba(255,255,255,.035) 0 1px,transparent 1px 13px);mask-image:linear-gradient(to bottom,#000 0%,rgba(0,0,0,.9) 50%,transparent 100%)}
+    .app{position:relative;display:grid;grid-template-columns:280px minmax(0,1fr);min-height:100vh}.rail{position:sticky;top:0;height:100vh;padding:22px;border-right:1px solid var(--line);background:linear-gradient(180deg,rgba(9,14,20,.94),rgba(7,9,13,.88));backdrop-filter:blur(18px)}
+    .brand{display:flex;gap:12px;align-items:center;margin-bottom:28px}.sigil{width:42px;height:42px;border-radius:14px;background:conic-gradient(from 210deg,var(--cyan),var(--blue),#203247,var(--cyan));box-shadow:0 0 36px rgba(78,228,209,.25);position:relative}.sigil:after{content:"";position:absolute;inset:9px;border:1px solid rgba(255,255,255,.55);border-radius:10px;background:rgba(7,9,13,.45)}
+    .brand h1{font-size:15px;letter-spacing:.16em;line-height:1.2;margin:0;text-transform:uppercase}.brand small{color:var(--muted);font-family:var(--mono);font-size:11px}.nav{display:grid;gap:8px;margin:18px 0 26px}.nav a{color:var(--muted);text-decoration:none;padding:11px 12px;border:1px solid transparent;border-radius:12px;font-size:13px}.nav a:hover{color:var(--ink);border-color:var(--line);background:rgba(255,255,255,.035)}
+    .authbox{padding:14px;border:1px solid var(--line);border-radius:16px;background:rgba(17,25,35,.7)}label{display:block;color:var(--faint);text-transform:uppercase;letter-spacing:.12em;font-size:10px;margin:0 0 7px}input,select,button{font:inherit}input,select{width:100%;border:1px solid var(--line);background:#090e14;color:var(--ink);border-radius:12px;padding:11px 12px;outline:none}input:focus,select:focus{border-color:rgba(78,228,209,.72);box-shadow:0 0 0 3px rgba(78,228,209,.08)}.authbox input+label{margin-top:12px}
+    button{border:0;border-radius:12px;background:linear-gradient(135deg,var(--cyan),var(--blue));color:#041015;font-weight:800;letter-spacing:.04em;padding:11px 13px;cursor:pointer;box-shadow:0 12px 30px rgba(78,228,209,.16)}button:hover{filter:brightness(1.08)}button.secondary{background:#111923;color:var(--ink);border:1px solid var(--line);box-shadow:none}button.ghost{background:transparent;color:var(--cyan);border:1px solid rgba(78,228,209,.42);box-shadow:none}.rail button{width:100%;margin-top:14px}
+    .content{padding:26px 30px 40px}.hero{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:end;margin-bottom:22px}.eyebrow{font-family:var(--mono);color:var(--cyan);letter-spacing:.16em;text-transform:uppercase;font-size:12px}.hero h2{font-size:42px;line-height:1.02;margin:8px 0 8px;letter-spacing:-.04em}.hero p{color:var(--muted);margin:0;max-width:760px}.live{display:flex;gap:8px;align-items:center;border:1px solid var(--line);border-radius:999px;padding:9px 13px;background:rgba(17,25,35,.76);color:var(--muted);font-family:var(--mono);font-size:12px}.dot{width:9px;height:9px;border-radius:99px;background:var(--green);box-shadow:0 0 18px var(--green)}
+    .grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px;margin-bottom:16px}.card{grid-column:span 12;background:linear-gradient(180deg,rgba(17,25,35,.92),rgba(10,15,22,.92));border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}.span3{grid-column:span 3}.span4{grid-column:span 4}.span5{grid-column:span 5}.span6{grid-column:span 6}.span7{grid-column:span 7}.span8{grid-column:span 8}.card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px 17px;border-bottom:1px solid var(--line)}.card h3{margin:0;font-size:12px;letter-spacing:.13em;text-transform:uppercase;color:#cdd8e5}.body{padding:16px 17px}.metric{font-family:var(--mono);font-size:38px;line-height:1;color:var(--ink);letter-spacing:-.05em}.metric-label{margin-top:8px;color:var(--muted);font-size:12px}.metric-card{position:relative;min-height:122px}.metric-card:after{content:"";position:absolute;right:-26px;bottom:-28px;width:95px;height:95px;border-radius:999px;border:1px solid rgba(78,228,209,.28)}
+    .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.row>*{flex:1}.row button{flex:0 0 auto}.stack{display:grid;gap:12px}.muted{color:var(--muted)}.faint{color:var(--faint)}.ok{color:var(--green)}.error{color:var(--red)}code{font-family:var(--mono);color:#c2f7ff;word-break:break-all}.pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:#0a1017;color:var(--muted);border-radius:999px;padding:5px 9px;font-size:12px;margin:2px}.pill strong{color:var(--ink)}.status-online{color:var(--green)}.status-offline{color:var(--red)}.sev-critical,.sev-high{color:var(--red)}.sev-medium{color:var(--amber)}.sev-low{color:var(--cyan)}.sev-info{color:var(--blue)}
+    table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}th{color:var(--faint);font-size:10px;text-transform:uppercase;letter-spacing:.11em;text-align:left;font-weight:800;padding:0 10px 9px}td{padding:12px 10px;border-top:1px solid rgba(34,48,64,.78);vertical-align:top}tbody tr:hover td{background:rgba(78,228,209,.035)}.hostcell{display:flex;gap:10px;align-items:center}.osicon{width:30px;height:30px;border-radius:10px;display:grid;place-items:center;background:#0b121a;border:1px solid var(--line);color:var(--cyan);font-family:var(--mono);font-size:11px}.empty{border:1px dashed var(--line);border-radius:14px;padding:22px;color:var(--muted);text-align:center}.split{display:grid;grid-template-columns:1fr 1fr;gap:12px}.bar{height:9px;border-radius:99px;background:#081018;overflow:hidden;border:1px solid var(--line);margin-top:7px}.bar span{display:block;height:100%;background:linear-gradient(90deg,var(--cyan),var(--blue))}.timeline{display:grid;gap:10px}.event{padding:11px 12px;border:1px solid var(--line);border-radius:14px;background:rgba(10,16,23,.72)}.event b{display:block;margin-bottom:4px}
+    @media(max-width:1100px){.app{grid-template-columns:1fr}.rail{position:relative;height:auto}.nav{grid-template-columns:repeat(3,1fr)}.hero{grid-template-columns:1fr}.span3,.span4,.span5,.span6,.span7,.span8{grid-column:span 12}}@media(max-width:680px){.content{padding:18px}.hero h2{font-size:31px}.nav{grid-template-columns:1fr}.row{display:grid}.row button{width:100%}.split{grid-template-columns:1fr}}
   </style>
 </head>
 <body>
-<header>
-  <h1><span class="mark">OPEN EDR MDR</span> // INTRANET V1</h1>
-  <div class="controls"><input id="tenant" value="default" title="tenant"/><input id="token" type="password" value="dev-admin-token" title="admin token"/><button onclick="loadAll()">REFRESH</button></div>
-</header>
-<main>
-  <section class="grid" id="metrics"></section>
-  <section class="grid">
-    <div class="card span6"><h2>Deployment Package</h2><div class="body"><p class="muted">下載 Windows agent 與含 enrollment token/server URL 的安裝設定檔。</p><div class="row"><input id="serverUrl" value="http://127.0.0.1:8765" placeholder="server url"><input id="maxUses" value="1" title="token max uses"><button onclick="downloadAgent()">DOWNLOAD AGENT EXE</button><button onclick="downloadConfig()">DOWNLOAD CONFIG</button></div><div id="deployStatus" style="margin-top:10px"></div></div></div>
-    <div class="card span6"><h2>Reverse-Proxy Job Dispatch</h2><div class="body"><p class="muted">Server queue job；endpoint outbound polling /tasks/claim 後執行。</p><div class="row"><select id="taskAgent"></select><select id="taskType"><option>inventory</option><option>process_list</option><option>network_connections</option><option>service_list</option><option>scheduled_tasks</option><option>windows_event_logs</option><option>file_exists</option><option>file_hash</option></select><input id="taskArgs" placeholder='args JSON, e.g. {"profile":"powershell"}' style="flex:1"><button onclick="createTask()">QUEUE JOB</button></div><div id="taskStatus" style="margin-top:10px"></div></div></div>
-  </section>
-  <section class="grid">
-    <div class="card span6"><h2>Indicator Hunt</h2><div class="body"><div class="row"><input id="indicator" placeholder="IP / domain / hash / command fragment" style="flex:1"><button onclick="hunt()">HUNT</button></div><div id="hunt" style="margin-top:14px"></div></div></div>
-    <div class="card span6"><h2>Operational Distribution</h2><div class="body" id="dist"></div></div>
-  </section>
-  <section class="grid">
-    <div class="card span12"><h2>Reporting Endpoints</h2><div class="body" id="agents"></div></div>
-    <div class="card span6"><h2>Alerts</h2><div class="body" id="alerts"></div></div>
-    <div class="card span6"><h2>Tasks</h2><div class="body" id="tasks"></div></div>
-    <div class="card span6"><h2>Cases</h2><div class="body" id="cases"></div></div>
-    <div class="card span6"><h2>Saved Hunts / Raw Evidence</h2><div class="body"><div id="hunts"></div><hr style="border-color:#263544"><div id="evidence"></div></div></div>
-  </section>
-</main>
+<div class="app">
+  <aside class="rail">
+    <div class="brand"><div class="sigil"></div><div><h1>OPEN EDR MDR</h1><small>endpoint response console</small></div></div>
+    <nav class="nav"><a href="#overview">Overview</a><a href="#endpoints">Endpoints</a><a href="#response">Response</a><a href="#detections">Detections</a><a href="#hunt">Hunt</a><a href="#evidence">Evidence</a></nav>
+    <div class="authbox">
+      <label for="tenant">Tenant</label><input id="tenant" value="default" />
+      <label for="token">Admin token</label><input id="token" type="password" value="dev-admin-token" />
+      <button onclick="loadAll()">Refresh console</button>
+    </div>
+  </aside>
+  <main class="content">
+    <section class="hero" id="overview">
+      <div><div class="eyebrow">SOC command surface</div><h2>Endpoint visibility, queued response, and evidence in one place.</h2><p>Inspired by Wazuh-style security overview, Velociraptor collection workflows, and Fleet/osquery host operations — tuned for this prototype's outbound-only agent model.</p></div>
+      <div class="live"><span class="dot"></span><span id="liveText">loading telemetry</span></div>
+    </section>
+    <section class="grid" id="metrics"></section>
+    <section class="grid">
+      <div class="card span8" id="endpoints"><div class="card-head"><h3>Reporting Endpoints</h3><span class="pill" id="agentPill">0 hosts</span></div><div class="body" id="agents"></div></div>
+      <div class="card span4"><div class="card-head"><h3>Operational distribution</h3></div><div class="body stack" id="dist"></div></div>
+    </section>
+    <section class="grid" id="response">
+      <div class="card span6"><div class="card-head"><h3>Deployment package</h3><span class="pill">Windows agent</span></div><div class="body stack"><p class="muted">下載 agent 與含 tenant/server/enrollment token 的設定檔。</p><div class="row"><input id="serverUrl" value="http://192.168.1.93:8765" placeholder="server url"><input id="maxUses" value="" title="token max uses" placeholder="max uses optional"></div><div class="row"><button onclick="downloadPackage()">DOWNLOAD DEPLOYMENT ZIP</button><button class="secondary" onclick="downloadConfig()">DOWNLOAD CONFIG</button></div><div id="deployStatus"></div></div></div>
+      <div class="card span6"><div class="card-head"><h3>Reverse-Proxy Job Dispatch</h3><span class="pill">outbound polling</span></div><div class="body stack"><p class="muted">Server queue job；endpoint 之後 polling <code>/tasks/claim</code> 取走執行。</p><div class="row"><select id="taskAgent"></select><select id="taskType"><option>inventory</option><option>process_list</option><option>network_connections</option><option>service_list</option><option>scheduled_tasks</option><option>windows_event_logs</option><option>file_exists</option><option>file_hash</option></select></div><input id="taskArgs" placeholder='args JSON, e.g. {"path":"C:\\Windows\\System32\\cmd.exe"}'><div class="row"><button onclick="createTask()">Queue read-only job</button><button class="secondary" onclick="presetInventory()">Inventory preset</button></div><div id="taskStatus"></div></div></div>
+    </section>
+    <section class="grid" id="detections">
+      <div class="card span7"><div class="card-head"><h3>Alerts</h3><span class="pill">latest 25</span></div><div class="body" id="alerts"></div></div>
+      <div class="card span5"><div class="card-head"><h3>Cases</h3><span class="pill">triage queue</span></div><div class="body" id="cases"></div></div>
+      <div class="card span12"><div class="card-head"><h3>Tasks</h3><span class="pill">agent queue</span></div><div class="body" id="tasks"></div></div>
+    </section>
+    <section class="grid" id="hunt">
+      <div class="card span7"><div class="card-head"><h3>Indicator hunt</h3><span class="pill">events + hosts</span></div><div class="body stack"><div class="row"><input id="indicator" placeholder="IP / domain / hash / command fragment"><button onclick="hunt()">Hunt</button></div><div id="huntResults"></div></div></div>
+      <div class="card span5" id="evidence"><div class="card-head"><h3>Saved hunts / raw evidence</h3></div><div class="body stack"><div id="hunts"></div><div id="evidenceList"></div></div></div>
+    </section>
+  </main>
+</div>
 <script>
 const $=id=>document.getElementById(id); let AGENTS=[];
 function tenant(){return encodeURIComponent($('tenant').value||'default')} function rawTenant(){return $('tenant').value||'default'} function headers(json=false){const h={'Authorization':'Bearer '+$('token').value}; if(json) h['Content-Type']='application/json'; return h}
 async function api(path,opts={}){opts.headers={...(opts.headers||{}),...headers(opts.json)}; if(opts.json&&opts.body&&typeof opts.body!=='string') opts.body=JSON.stringify(opts.body); const r=await fetch(path,opts); if(!r.ok) throw new Error(path+' '+r.status+' '+await r.text()); return await r.json()}
-function esc(v){return String(v??'').replace(/[&<>]/g,s=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[s]))} function pills(obj){return Object.entries(obj||{}).map(([k,v])=>`<span class="pill">${esc(k)}: <b>${esc(v)}</b></span>`).join(' ')}
-function table(rows,cols){if(!rows||!rows.length)return '<span class="muted">no records</span>';return '<table><thead><tr>'+cols.map(c=>'<th>'+c[0]+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+cols.map(c=>'<td>'+c[1](r)+'</td>').join('')+'</tr>').join('')+'</tbody></table>'}
-async function loadAll(){try{const t=tenant();const [s,a,al,c,ta,h,ev]=await Promise.all([api(`/api/v1/admin/summary?tenant_id=${t}`),api(`/api/v1/admin/agents?tenant_id=${t}`),api(`/api/v1/admin/alerts?tenant_id=${t}&limit=25`),api(`/api/v1/admin/cases?tenant_id=${t}&limit=25`),api(`/api/v1/admin/tasks?tenant_id=${t}&limit=25`),api(`/api/v1/admin/hunts?tenant_id=${t}&limit=25`),api(`/api/v1/admin/raw-evidence/list?tenant_id=${t}&limit=25`)]);AGENTS=a.agents||[];renderSummary(s);renderAgents(AGENTS);renderAgentOptions(AGENTS);renderAlerts(al);renderCases(c);renderTasks(ta);renderHunts(h);renderEvidence(ev.evidence)}catch(e){$('metrics').innerHTML='<div class="card span12"><div class="body error">'+esc(e.message)+'</div></div>'}}
-function renderSummary(s){const c=s.counts||{};$('metrics').innerHTML=['agents','events','alerts','cases','tasks','raw_evidence'].map(k=>`<div class="card span3"><div class="body"><div class="metric">${c[k]??0}</div><div class="label">${k}</div></div></div>`).join('');$('dist').innerHTML=`<p>Agents ${pills(s.agent_status)}</p><p>Tasks ${pills(s.task_status)}</p><p>Cases ${pills(s.case_status)}</p><p>Alerts ${pills(s.alert_severity)}</p>`}
-function renderAgentOptions(rows){$('taskAgent').innerHTML=(rows||[]).map(a=>`<option value="${esc(a.agent_id)}">${esc(a.host)} (${esc(a.status)})</option>`).join('')}
-function renderAgents(rows){$('agents').innerHTML=table(rows,[['Status',r=>`<span class="${esc(r.status)}">${esc(r.status)}</span>`],['Hostname',r=>esc(r.host)],['OS',r=>esc(r.os)],['IP',r=>esc(r.ip_address)],['Agent',r=>esc(r.agent_version)],['Last Report',r=>esc(r.last_seen)],['ID',r=>`<code>${esc(r.agent_id)}</code>`],['Action',r=>`<button onclick="quickInventory('${esc(r.agent_id)}')">inventory</button>`]])}
-function renderAlerts(rows){$('alerts').innerHTML=table(rows,[['Severity',r=>`<span class="sev-${esc(r.severity)}">${esc(r.severity)}</span>`],['Title',r=>esc(r.title)],['Host',r=>esc(r.host)],['Time',r=>esc(r.timestamp)]])}
-function renderCases(rows){$('cases').innerHTML=table(rows,[['Status',r=>esc(r.status)],['Severity',r=>esc(r.severity)],['Title',r=>esc(r.title)],['Assignee',r=>esc(r.assignee)],['Updated',r=>esc(r.updated_at)]])}
-function renderTasks(rows){$('tasks').innerHTML=table(rows,[['Status',r=>esc(r.status)],['Type',r=>esc(r.task_type)],['Agent',r=>esc((r.agent_id||'').slice(0,8))],['Raw',r=>r.raw_ref?'yes':''],['Created',r=>esc(r.created_at)]])}
-function renderHunts(rows){$('hunts').innerHTML='<b>Hunts</b>'+table(rows,[['Enabled',r=>r.enabled?'yes':'no'],['Name',r=>esc(r.name)],['Indicator',r=>esc(r.indicator)],['Updated',r=>esc(r.updated_at)]])}
-function renderEvidence(rows){$('evidence').innerHTML='<b>Evidence</b>'+table(rows,[['Kind',r=>esc(r.kind)],['SHA256',r=>esc((r.sha256||'').slice(0,16))],['Ref',r=>esc(r.raw_ref)],['Created',r=>esc(r.created_at)]])}
-async function createTask(){try{const args=$('taskArgs').value?JSON.parse($('taskArgs').value):{};const body={tenant_id:rawTenant(),agent_id:$('taskAgent').value,task_type:$('taskType').value,args};const r=await api('/api/v1/admin/tasks',{method:'POST',json:true,body});$('taskStatus').innerHTML=`<span class="ok">queued ${esc(r.task_id)}</span>`;loadAll()}catch(e){$('taskStatus').innerHTML='<span class="error">'+esc(e.message)+'</span>'}}
-async function quickInventory(agentId){$('taskAgent').value=agentId;$('taskType').value='inventory';$('taskArgs').value='{}';await createTask()}
-async function hunt(){try{const q=encodeURIComponent($('indicator').value);if(!q)return;$('hunt').innerHTML='<span class="muted">hunting...</span>';const r=await api(`/api/v1/admin/investigate/hunt?tenant_id=${tenant()}&indicator=${q}&limit=50`);$('hunt').innerHTML=`<p>Hosts ${pills(Object.fromEntries((r.hosts||[]).map(h=>[h,'hit'])))}</p>`+table(r.events||[],[['Type',e=>esc(e.event_type)],['Host',e=>esc(e.host)],['Process',e=>esc(e.process_name)],['Command',e=>esc(e.command_line||e.remote_ip||e.domain||'')]])}catch(e){$('hunt').innerHTML='<span class="error">'+esc(e.message)+'</span>'}}
+function esc(v){return String(v??'').replace(/[&<>"']/g,s=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]))}
+function pill(k,v){return `<span class="pill">${esc(k)} <strong>${esc(v)}</strong></span>`} function pills(obj){const e=Object.entries(obj||{}); return e.length?e.map(([k,v])=>pill(k,v)).join(' '):'<span class="muted">no data</span>'}
+function empty(msg){return `<div class="empty">${esc(msg)}</div>`} function short(v,n=10){v=String(v||''); return v.length>n?v.slice(0,n)+'…':v}
+function table(rows,cols,msg='no records'){if(!rows||!rows.length)return empty(msg);return '<table><thead><tr>'+cols.map(c=>'<th>'+c[0]+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+cols.map(c=>'<td>'+c[1](r)+'</td>').join('')+'</tr>').join('')+'</tbody></table>'}
+function pct(v,total){return total?Math.max(4,Math.round((Number(v)||0)*100/total)):0} function distBlock(title,obj){const total=Object.values(obj||{}).reduce((a,b)=>a+Number(b||0),0); const rows=Object.entries(obj||{}); if(!rows.length)return `<div><b>${esc(title)}</b><div class="muted">no data</div></div>`; return `<div><b>${esc(title)}</b>`+rows.map(([k,v])=>`<div style="margin-top:10px"><div class="row" style="justify-content:space-between"><span class="muted">${esc(k)}</span><code>${esc(v)}</code></div><div class="bar"><span style="width:${pct(v,total)}%"></span></div></div>`).join('')+'</div>'}
+async function loadAll(){try{$('liveText').textContent='refreshing';const t=tenant();const [s,a,al,c,ta,h,ev]=await Promise.all([api(`/api/v1/admin/summary?tenant_id=${t}`),api(`/api/v1/admin/agents?tenant_id=${t}`),api(`/api/v1/admin/alerts?tenant_id=${t}&limit=25`),api(`/api/v1/admin/cases?tenant_id=${t}&limit=25`),api(`/api/v1/admin/tasks?tenant_id=${t}&limit=25`),api(`/api/v1/admin/hunts?tenant_id=${t}&limit=25`),api(`/api/v1/admin/raw-evidence/list?tenant_id=${t}&limit=25`)]);AGENTS=a.agents||[];renderSummary(s);renderAgents(AGENTS);renderAgentOptions(AGENTS);renderAlerts(al.alerts||al);renderCases(c.cases||c);renderTasks(ta.tasks||ta);renderHunts(h.hunts||h);renderEvidence(ev.evidence||ev);$('liveText').textContent='updated '+new Date().toLocaleTimeString()}catch(e){$('liveText').textContent='load failed';$('metrics').innerHTML='<div class="card"><div class="body error">'+esc(e.message)+'</div></div>'}}
+function renderSummary(s){const c=s.counts||{};const items=[['agents','Endpoints'],['alerts','Alerts'],['cases','Cases'],['tasks','Tasks']];$('metrics').innerHTML=items.map(([k,l])=>`<div class="card span3 metric-card"><div class="body"><div class="metric">${esc(c[k]??0)}</div><div class="metric-label">${esc(l)}</div></div></div>`).join('');$('dist').innerHTML=distBlock('Agent health',s.agent_status)+distBlock('Alert severity',s.alert_severity)+distBlock('Task queue',s.task_status)+distBlock('Case status',s.case_status)}
+function renderAgentOptions(rows){$('agentPill').textContent=(rows||[]).length+' hosts';$('taskAgent').innerHTML=(rows||[]).map(a=>`<option value="${esc(a.agent_id)}">${esc(a.host||a.hostname||a.agent_id)} (${esc(a.status)})</option>`).join('')||'<option value="">no agent</option>'}
+function renderAgents(rows){$('agents').innerHTML=table(rows,[['Host',r=>`<div class="hostcell"><div class="osicon">${esc((r.os||'?').slice(0,3).toUpperCase())}</div><div><b>${esc(r.host||r.hostname||'unknown')}</b><br><span class="muted">${esc(r.ip_address||r.ip||'no ip')}</span></div></div>`],['Health',r=>`<span class="status-${esc(r.status)}">● ${esc(r.status)}</span>`],['Agent',r=>esc(r.agent_version||'unknown')],['Last seen',r=>esc(r.last_seen||'never')],['ID',r=>`<code>${esc(short(r.agent_id,18))}</code>`],['Action',r=>`<button class="ghost" onclick="quickInventory('${esc(r.agent_id)}')">inventory</button>`]],'no enrolled endpoints yet')}
+function renderAlerts(rows){$('alerts').innerHTML=table(rows,[['Severity',r=>`<b class="sev-${esc(r.severity)}">${esc(r.severity)}</b>`],['Detection',r=>`<b>${esc(r.title)}</b><br><span class="muted">${esc(r.source||'')}</span>`],['Host',r=>esc(r.host||'')],['Time',r=>esc(r.timestamp||r.created_at||'')]],'no alerts')}
+function renderCases(rows){$('cases').innerHTML=table(rows,[['Status',r=>esc(r.status)],['Case',r=>`<b>${esc(r.title)}</b><br><span class="muted">${esc(r.assignee||'unassigned')}</span>`],['Severity',r=>`<span class="sev-${esc(r.severity)}">${esc(r.severity)}</span>`],['Updated',r=>esc(r.updated_at||'')]],'no open cases')}
+function renderTasks(rows){$('tasks').innerHTML=table(rows,[['Status',r=>`<b>${esc(r.status)}</b>`],['Task',r=>esc(r.task_type)],['Endpoint',r=>`<code>${esc(short(r.agent_id,18))}</code>`],['Raw evidence',r=>r.raw_ref?`<code>${esc(r.raw_ref)}</code>`:'<span class="muted">none</span>'],['Created',r=>esc(r.created_at||'')]],'no queued tasks')}
+function renderHunts(rows){$('hunts').innerHTML='<b>Saved hunts</b>'+table(rows,[['Enabled',r=>r.enabled?'yes':'no'],['Name',r=>esc(r.name)],['Indicator',r=>`<code>${esc(r.indicator)}</code>`]],'no saved hunts')}
+function renderEvidence(rows){$('evidenceList').innerHTML='<b>Raw evidence</b>'+table(rows,[['Kind',r=>esc(r.kind)],['SHA256',r=>`<code>${esc(short(r.sha256,16))}</code>`],['Created',r=>esc(r.created_at||'')]],'no evidence collected')}
+async function createTask(){try{if(!$('taskAgent').value)throw new Error('no endpoint selected');const args=$('taskArgs').value?JSON.parse($('taskArgs').value):{};const body={tenant_id:rawTenant(),agent_id:$('taskAgent').value,task_type:$('taskType').value,args};const r=await api('/api/v1/admin/tasks',{method:'POST',json:true,body});$('taskStatus').innerHTML=`<span class="ok">queued ${esc(r.task_id)}</span>`;loadAll()}catch(e){$('taskStatus').innerHTML='<span class="error">'+esc(e.message)+'</span>'}}
+function presetInventory(){ $('taskType').value='inventory'; $('taskArgs').value='{}'; }
+async function quickInventory(agentId){$('taskAgent').value=agentId;presetInventory();await createTask()}
+async function hunt(){try{const q=encodeURIComponent($('indicator').value);if(!q)return;$('huntResults').innerHTML='<span class="muted">hunting...</span>';const r=await api(`/api/v1/admin/investigate/hunt?tenant_id=${tenant()}&indicator=${q}&limit=50`);$('huntResults').innerHTML=`<div class="split"><div class="event"><b>Matched hosts</b>${pills(Object.fromEntries((r.hosts||[]).map(h=>[h,'hit'])))}</div><div class="event"><b>Event count</b><span class="metric" style="font-size:28px">${esc((r.events||[]).length)}</span></div></div>`+table(r.events||[],[['Type',e=>esc(e.event_type)],['Host',e=>esc(e.host)],['Process',e=>esc(e.process_name)],['Signal',e=>esc(e.command_line||e.remote_ip||e.domain||'')]],'no matching events')}catch(e){$('huntResults').innerHTML='<span class="error">'+esc(e.message)+'</span>'}}
 async function downloadBlob(path,filename,statusId){try{const r=await fetch(path,{headers:headers()}); if(!r.ok) throw new Error(await r.text()); const b=await r.blob(); const u=URL.createObjectURL(b); const a=document.createElement('a'); a.href=u; a.download=filename; a.click(); URL.revokeObjectURL(u); $(statusId).innerHTML='<span class="ok">download started</span>'}catch(e){$(statusId).innerHTML='<span class="error">'+esc(e.message)+'</span>'}}
-function downloadAgent(){downloadBlob('/api/v1/admin/downloads/agent/windows','open-edr-agent.exe','deployStatus')}
-function downloadConfig(){const q=`tenant_id=${tenant()}&server_url=${encodeURIComponent($('serverUrl').value)}&max_uses=${encodeURIComponent($('maxUses').value||'1')}`;downloadBlob('/api/v1/admin/downloads/agent-config?'+q,'open-edr-agent-config.json','deployStatus')}
+function deploymentQuery(){const max=$('maxUses').value;return `tenant_id=${tenant()}&server_url=${encodeURIComponent($('serverUrl').value)}`+(max?`&max_uses=${encodeURIComponent(max)}`:'')} function downloadPackage(){downloadBlob('/api/v1/admin/downloads/agent/package?'+deploymentQuery(),'open-edr-agent-package.zip','deployStatus')} function downloadAgent(){downloadBlob('/api/v1/admin/downloads/agent/windows','open-edr-agent.exe','deployStatus')} function downloadConfig(){downloadBlob('/api/v1/admin/downloads/agent-config?'+deploymentQuery(),'open-edr-agent-config.json','deployStatus')}
 loadAll();
 </script>
 </body>
 </html>
 """
+

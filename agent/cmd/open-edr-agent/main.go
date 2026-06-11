@@ -218,7 +218,7 @@ func defaultStatePath() string {
 	if err != nil {
 		base = "."
 	}
-	return filepath.Join(base, "open-edr-mdr-agent", "agent-state.json")
+	return filepath.Join(base, "open-edr-mdr-agent", "open-edr-scoreboard.json")
 }
 
 func defaultSpoolPath() string {
