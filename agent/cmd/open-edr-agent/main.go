@@ -45,12 +45,13 @@ func main() {
 	uninstallSvc := flag.Bool("uninstall-service", false, "uninstall Windows service and exit")
 	serviceName := flag.String("service-name", "OpenEDRMDRAgent", "Windows service name")
 	serviceDisplayName := flag.String("service-display-name", "Open EDR MDR Agent", "Windows service display name")
+	installDir := flag.String("install-dir", defaultInstallDir(), "Windows service binary install directory")
 	flag.Parse()
 
 	opts := agentOptions{Server: *server, EnrollToken: *enrollToken, StatePath: *statePath, SpoolPath: *spoolPath, Once: *once, DemoEvent: *demoEvent, CollectSnapshot: *collectSnapshot, MaxSnapshotEvents: *maxSnapshotEvents, Interval: *interval}
 
 	if *installSvc {
-		if err := installService(*serviceName, *serviceDisplayName, *server, *enrollToken, *statePath, *spoolPath); err != nil {
+		if err := installService(*serviceName, *serviceDisplayName, *server, *enrollToken, *statePath, *spoolPath, *installDir); err != nil {
 			log.Fatalf("install service failed: %v", err)
 		}
 		log.Printf("service installed: %s", *serviceName)
@@ -262,18 +263,34 @@ func uploadTaskEvidence(client *agentapi.Client, s *state.State, upload map[stri
 	return client.UploadEvidence(s.AgentID, s.AgentToken, agentapi.EvidenceUploadRequest{Kind: kind, Path: path, SHA256: sha, Size: size, ContentBase64: content, Metadata: metadata})
 }
 
-func defaultStatePath() string {
+func defaultInstallDir() string {
+	if runtime.GOOS == "windows" {
+		if programFiles := os.Getenv("ProgramFiles"); programFiles != "" {
+			return filepath.Join(programFiles, "OpenEDRMDR")
+		}
+		return `C:\Program Files\OpenEDRMDR`
+	}
+	return "."
+}
+
+func defaultDataDir() string {
+	if runtime.GOOS == "windows" {
+		if programData := os.Getenv("ProgramData"); programData != "" {
+			return filepath.Join(programData, "OpenEDRMDR")
+		}
+		return `C:\ProgramData\OpenEDRMDR`
+	}
 	base, err := os.UserConfigDir()
 	if err != nil {
 		base = "."
 	}
-	return filepath.Join(base, "open-edr-mdr-agent", "open-edr-scoreboard.json")
+	return filepath.Join(base, "open-edr-mdr-agent")
+}
+
+func defaultStatePath() string {
+	return filepath.Join(defaultDataDir(), "open-edr-scoreboard.json")
 }
 
 func defaultSpoolPath() string {
-	base, err := os.UserConfigDir()
-	if err != nil {
-		base = "."
-	}
-	return filepath.Join(base, "open-edr-mdr-agent", "spool.jsonl")
+	return filepath.Join(defaultDataDir(), "spool.jsonl")
 }

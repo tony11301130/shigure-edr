@@ -4,20 +4,37 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"golang.org/x/sys/windows/svc"
 )
 
-func installService(serviceName, displayName, server, enrollToken, statePath, spoolPath string) error {
+func installService(serviceName, displayName, server, enrollToken, statePath, spoolPath, installDir string) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
+	if err := os.MkdirAll(installDir, 0755); err != nil {
+		return fmt.Errorf("create install dir: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(statePath), 0700); err != nil {
+		return fmt.Errorf("create state dir: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(spoolPath), 0700); err != nil {
+		return fmt.Errorf("create spool dir: %w", err)
+	}
+	installedExe := filepath.Join(installDir, "open-edr-agent.exe")
+	if !samePath(exe, installedExe) {
+		if err := copyExecutable(exe, installedExe); err != nil {
+			return err
+		}
+	}
 	args := []string{"--server", server, "--enroll-token", enrollToken, "--state", statePath, "--spool", spoolPath}
-	binPath := fmt.Sprintf("\"%s\" %s", exe, strings.Join(args, " "))
+	binPath := fmt.Sprintf("\"%s\" %s", installedExe, strings.Join(args, " "))
 	cmd := exec.Command("sc.exe", "create", serviceName, "binPath=", binPath, "DisplayName=", displayName, "start=", "auto")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -31,6 +48,40 @@ func uninstallService(serviceName string) error {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("sc delete failed: %w: %s", err, string(out))
+	}
+	return nil
+}
+
+func samePath(a, b string) bool {
+	absA, errA := filepath.Abs(a)
+	absB, errB := filepath.Abs(b)
+	if errA == nil && errB == nil {
+		a, b = absA, absB
+	}
+	return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
+}
+
+func copyExecutable(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("open source executable: %w", err)
+	}
+	defer in.Close()
+
+	tmp := dst + ".tmp"
+	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0755)
+	if err != nil {
+		return fmt.Errorf("create installed executable: %w", err)
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return fmt.Errorf("copy installed executable: %w", err)
+	}
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("close installed executable: %w", err)
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		return fmt.Errorf("replace installed executable: %w", err)
 	}
 	return nil
 }

@@ -62,12 +62,17 @@ def test_agent_package_zip_contains_binary_config_and_installer(tmp_path, monkey
         assert config["tenant_id"] == "default"
         assert config["server_url"] == "https://edr.intra"
         assert config["enrollment_token"]
-        assert config["identity_file"] == "open-edr-scoreboard.json"
+        assert config["install_dir"] == "C:\\Program Files\\OpenEDRMDR"
+        assert config["data_dir"] == "C:\\ProgramData\\OpenEDRMDR"
+        assert config["identity_file"] == "C:\\ProgramData\\OpenEDRMDR\\open-edr-scoreboard.json"
+        assert config["spool_file"] == "C:\\ProgramData\\OpenEDRMDR\\spool.jsonl"
         assert "per-endpoint credential" in config["enrollment_model"]["stage_2"]
         install_ps1 = zf.read("install.ps1").decode()
         assert "--enroll-token" in install_ps1
+        assert "--install-dir" in install_ps1
         assert "--config" not in install_ps1
-        assert "open-edr-scoreboard.json" in zf.read("README.txt").decode()
+        readme = zf.read("README.txt").decode()
+        assert "C:\\ProgramData\\OpenEDRMDR\\open-edr-scoreboard.json" in readme
 
 
 def test_minimal_ui_contains_endpoint_task_and_download_controls(tmp_path):

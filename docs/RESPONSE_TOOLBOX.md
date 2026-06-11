@@ -12,6 +12,16 @@ sc.exe start OpenEDRMDRAgent
 sc.exe qc OpenEDRMDRAgent
 ```
 
+Default Windows install paths:
+
+```text
+Binary: C:\Program Files\OpenEDRMDR\open-edr-agent.exe
+State:  C:\ProgramData\OpenEDRMDR\open-edr-scoreboard.json
+Spool:  C:\ProgramData\OpenEDRMDR\spool.jsonl
+```
+
+The service installer may be launched from a temporary deployment directory, but it copies the binary into `C:\Program Files\OpenEDRMDR` before creating the service.
+
 Confirm:
 
 ```text

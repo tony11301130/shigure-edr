@@ -427,18 +427,22 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
             "server_url": server_url,
             "enrollment_token": enrollment_token,
             "agent_filename": "open-edr-agent.exe",
-            "identity_file": "open-edr-scoreboard.json",
+            "install_dir": "C:\\Program Files\\OpenEDRMDR",
+            "data_dir": "C:\\ProgramData\\OpenEDRMDR",
+            "identity_file": "C:\\ProgramData\\OpenEDRMDR\\open-edr-scoreboard.json",
+            "spool_file": "C:\\ProgramData\\OpenEDRMDR\\spool.jsonl",
             "install_command": f".\\open-edr-agent.exe --install-service --server {server_url} --enroll-token {enrollment_token}",
             "package_install_command": ".\\install.ps1",
             "start_command": "sc.exe start OpenEDRMDRAgent",
             "enrollment_model": {
                 "stage_1": "This shared enrollment token is only for first registration with the server.",
-                "stage_2": "After successful enrollment, the server issues a per-endpoint credential stored as open-edr-scoreboard.json.",
+                "stage_2": "After successful enrollment, the server issues a per-endpoint credential stored as C:\\ProgramData\\OpenEDRMDR\\open-edr-scoreboard.json.",
                 "stage_3": "All heartbeat, event ingest, task claim, and result upload calls use the per-endpoint credential, not the shared enrollment token.",
             },
             "notes": [
                 "Run install.ps1 from an elevated PowerShell prompt on the Windows endpoint.",
                 "Endpoint traffic is outbound-only; server queues jobs and agent polls /tasks/claim.",
+                "The installer copies the service binary to C:\\Program Files\\OpenEDRMDR and stores endpoint state/spool files under C:\\ProgramData\\OpenEDRMDR.",
                 "Protect this package because it contains an enrollment token. The token should be short-lived or limited-use in production.",
             ],
         }
@@ -456,7 +460,7 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
             raise HTTPException(status_code=404, detail="windows_agent_binary_not_found")
         token = store.create_enrollment_token(tenant_id, max_uses=max_uses)
         config = _deployment_config(tenant_id, server_url, token)
-        install_ps1 = """$ErrorActionPreference = \"Stop\"
+        install_ps1 = r"""$ErrorActionPreference = \"Stop\"
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Agent = Join-Path $Here \"open-edr-agent.exe\"
 $ConfigPath = Join-Path $Here \"open-edr-agent-config.json\"
@@ -465,12 +469,17 @@ if (!(Test-Path $ConfigPath)) { throw \"open-edr-agent-config.json not found\" }
 $Config = Get-Content $ConfigPath -Raw | ConvertFrom-Json
 if (!$Config.server_url) { throw \"server_url missing from config\" }
 if (!$Config.enrollment_token) { throw \"enrollment_token missing from config\" }
+$InstallDir = $Config.install_dir
+$DataDir = $Config.data_dir
+if (!$InstallDir) { $InstallDir = "C:\\Program Files\\OpenEDRMDR" }
+if (!$DataDir) { $DataDir = "C:\\ProgramData\\OpenEDRMDR" }
 Write-Host \"Installing Open EDR MDR Agent for $($Config.server_url)\"
-& $Agent --install-service --server $Config.server_url --enroll-token $Config.enrollment_token
+& $Agent --install-service --server $Config.server_url --enroll-token $Config.enrollment_token --install-dir $InstallDir --state (Join-Path $DataDir "open-edr-scoreboard.json") --spool (Join-Path $DataDir "spool.jsonl")
 sc.exe start OpenEDRMDRAgent
-Write-Host \"Installed. After first enrollment the agent should persist open-edr-scoreboard.json as its unique identity credential.\"
+Write-Host \"Installed. Service binary: $InstallDir\open-edr-agent.exe\"
+Write-Host \"Endpoint state: $DataDir\open-edr-scoreboard.json\"
 """
-        readme = """Open EDR MDR Agent deployment package
+        readme = r"""Open EDR MDR Agent deployment package
 
 Files:
 - open-edr-agent.exe: Windows endpoint service binary
@@ -480,7 +489,7 @@ Files:
 Enrollment model:
 1. The config contains a shared enrollment token, similar to Fleet/osquery enroll secret.
 2. On first successful registration, the server creates the endpoint record and returns a per-endpoint credential.
-3. The endpoint stores that credential as open-edr-scoreboard.json and uses it for future authentication.
+3. The endpoint stores that credential as C:\ProgramData\OpenEDRMDR\open-edr-scoreboard.json and uses it for future authentication.
 4. The shared enrollment token should not be used as the long-term endpoint identity.
 
 Run from elevated PowerShell:
