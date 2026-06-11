@@ -41,6 +41,7 @@ type NormalizedEvent struct {
 	TenantID        string         `json:"tenant_id"`
 	SourceEventID   string         `json:"source_event_id,omitempty"`
 	Host            string         `json:"host,omitempty"`
+	IPAddress       string         `json:"ip_address,omitempty"`
 	User            string         `json:"user,omitempty"`
 	ProcessName     string         `json:"process_name,omitempty"`
 	ProcessID       string         `json:"process_id,omitempty"`
@@ -109,6 +110,29 @@ func (c *Client) ClaimTasks(agentID, token string, max int) ([]Task, error) {
 	}
 	err := c.do("POST", "/api/v1/agents/"+agentID+"/tasks/claim", token, map[string]any{"max_tasks": max}, &out)
 	return out.Tasks, err
+}
+
+type EvidenceUploadRequest struct {
+	Kind          string         `json:"kind"`
+	Path          string         `json:"path,omitempty"`
+	SHA256        string         `json:"sha256"`
+	Size          int64          `json:"size"`
+	ContentBase64 string         `json:"content_base64"`
+	Metadata      map[string]any `json:"metadata"`
+}
+
+type EvidenceUploadResponse struct {
+	RawRef string `json:"raw_ref"`
+	SHA256 string `json:"sha256"`
+	Size   int64  `json:"size"`
+}
+
+func (c *Client) UploadEvidence(agentID, token string, req EvidenceUploadRequest) (*EvidenceUploadResponse, error) {
+	var out EvidenceUploadResponse
+	if err := c.do("POST", "/api/v1/agents/"+agentID+"/evidence", token, req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 func (c *Client) SendTaskResult(agentID, token, taskID, status string, result map[string]any, msg string) error {

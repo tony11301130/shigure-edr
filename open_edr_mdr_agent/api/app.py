@@ -27,6 +27,8 @@ from open_edr_mdr_agent.api.models import (
     TaskCreateRequest,
     TaskRecord,
     TaskResultRequest,
+    EvidenceUploadRequest,
+    EvidenceUploadResponse,
 )
 from open_edr_mdr_agent.api.store import SQLiteStore
 from open_edr_mdr_agent.api.task_catalog import READONLY_TASK_CATALOG, TaskArgumentError, validate_task_args
@@ -113,6 +115,12 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
         req = req or TaskResultRequest(status="failed", error="empty result")
         store.complete_task(agent["tenant_id"], agent["agent_id"], task_id, req.status, req.result, req.error)
         return {"status": "ok"}
+
+    @app.post("/api/v1/agents/{agent_id}/evidence", response_model=EvidenceUploadResponse)
+    def upload_agent_evidence(agent=Depends(_agent_auth), req: EvidenceUploadRequest = None):
+        if req is None:
+            raise HTTPException(status_code=400, detail="empty_evidence_upload")
+        return store.store_agent_evidence(agent["tenant_id"], agent["agent_id"], req)
 
     @app.get("/api/v1/admin/task-catalog")
     def list_task_catalog(_admin=Depends(_admin_auth)):
@@ -214,6 +222,18 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
         if not task:
             raise HTTPException(status_code=404, detail="task_not_found")
         return task
+
+    @app.post("/api/v1/admin/tasks/{task_id}/cancel")
+    def cancel_task(task_id: str, tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):
+        if not store.cancel_task(tenant_id, task_id):
+            raise HTTPException(status_code=400, detail="task_not_cancellable")
+        return {"tenant_id": tenant_id, "task_id": task_id, "status": "cancelled"}
+
+    @app.post("/api/v1/admin/tasks/{task_id}/retry")
+    def retry_task(task_id: str, tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):
+        if not store.retry_task(tenant_id, task_id):
+            raise HTTPException(status_code=400, detail="task_not_retryable")
+        return {"tenant_id": tenant_id, "task_id": task_id, "status": "queued"}
 
     @app.get("/api/v1/admin/alerts/{alert_id}", response_model=Alert)
     def get_alert(alert_id: str, tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):

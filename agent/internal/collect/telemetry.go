@@ -21,6 +21,7 @@ func SnapshotTelemetryWithOptions(tenantID string, maxEvents int, opts Telemetry
 		maxEvents = 50
 	}
 	var events []agentapi.NormalizedEvent
+	events = append(events, EndpointStateTelemetry(tenantID))
 	if opts.CollectProcessSnapshot {
 		events = append(events, platformProcessSnapshot(tenantID, maxEvents)...)
 	}
@@ -34,4 +35,13 @@ func SnapshotTelemetryWithOptions(tenantID string, maxEvents int, opts Telemetry
 		return events[:maxEvents]
 	}
 	return events
+}
+
+func EndpointStateTelemetry(tenantID string) agentapi.NormalizedEvent {
+	inv := HostInventory()
+	return agentapi.NormalizedEvent{
+		Source: "internal", EventType: "endpoint_state", TenantID: tenantID,
+		Host: inv.Host, IPAddress: inv.IPAddress, Severity: "info",
+		Raw: map[string]any{"inventory": inv, "collector": "agent_endpoint_state"},
+	}
 }

@@ -109,3 +109,39 @@ On Windows, the agent now uses fixed native commands for common inventory tasks:
 - `schtasks.exe /query /fo csv /v`
 
 The agent does not expose arbitrary shell execution through these tasks.
+
+## V2 investigation and evidence tasks
+
+Additional explicit-dispatch investigation tasks:
+
+- `collect_file` — upload a bounded file to server raw evidence storage. The task result contains `evidence.raw_ref`, `evidence.sha256`, and `evidence.size`.
+- `process_detail` — return details for a PID. Linux returns `/proc` fields and executable hash when available. Windows returns fixed Win32_Process JSON from PowerShell/CIM.
+- `process_tree` — return the target PID plus direct children. Windows returns fixed Win32_Process JSON.
+- `autoruns_collect` — collect common persistence locations. Windows includes Run keys, startup folders, services, and scheduled tasks. Linux includes cron/systemd/profile locations.
+- `registry_query` — read-only Windows registry query using `reg.exe query`; unsupported on non-Windows endpoints.
+- `listening_ports` — return listening TCP ports. Windows uses `netstat.exe -ano -p tcp`; Linux parses `/proc/net/tcp*`.
+
+Evidence upload endpoint used by the agent:
+
+```text
+POST /api/v1/agents/{agent_id}/evidence
+```
+
+Admin evidence lookup:
+
+```text
+GET /api/v1/admin/raw-evidence?raw_ref=<raw-ref>
+GET /api/v1/admin/raw-evidence/by-hash/{sha256}
+```
+
+Task lifecycle admin endpoints:
+
+```text
+POST /api/v1/admin/tasks/{task_id}/cancel
+POST /api/v1/admin/tasks/{task_id}/retry
+POST /api/v1/admin/tasks/expire-stale
+```
+
+Agent heartbeat now reports health metadata including pid, version, runtime OS/arch, spool path/size, and task capability count.
+
+Every telemetry cycle includes one `endpoint_state` internal event so endpoint presence is searchable in the event store even when optional process/network/log collectors are disabled.

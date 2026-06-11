@@ -135,3 +135,62 @@ func TestCopyQuarantineAndDeleteRequireHash(t *testing.T) {
 		t.Fatalf("expected moved, got %#v", moved)
 	}
 }
+
+func TestCollectFileProducesUploadPayload(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "evidence.txt")
+	if err := os.WriteFile(path, []byte("endpoint evidence"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Execute("collect_file", map[string]any{"path": path, "max_bytes": 1024})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res["sha256"] == "" || res["upload_file"] == nil {
+		t.Fatalf("expected upload payload, got %#v", res)
+	}
+	upload := res["upload_file"].(map[string]any)
+	if upload["content_base64"] == "" || upload["path"] != path {
+		t.Fatalf("bad upload payload %#v", upload)
+	}
+}
+
+func TestProcessDetailCurrentProcess(t *testing.T) {
+	res, err := Execute("process_detail", map[string]any{"pid": os.Getpid()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res["pid"] == nil || res["name"] == "" {
+		t.Fatalf("expected process detail, got %#v", res)
+	}
+}
+
+func TestProcessTreeCurrentProcess(t *testing.T) {
+	res, err := Execute("process_tree", map[string]any{"pid": os.Getpid()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res["nodes"] == nil {
+		t.Fatalf("expected process tree nodes, got %#v", res)
+	}
+}
+
+func TestAutorunsCollect(t *testing.T) {
+	res, err := Execute("autoruns_collect", map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res["platform"] == "" {
+		t.Fatalf("expected platform, got %#v", res)
+	}
+}
+
+func TestListeningPorts(t *testing.T) {
+	res, err := Execute("listening_ports", map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res["platform"] == "" {
+		t.Fatalf("expected platform, got %#v", res)
+	}
+}

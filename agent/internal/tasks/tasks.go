@@ -29,8 +29,8 @@ type TaskMeta struct {
 }
 
 var Catalog = map[string]TaskMeta{
-	"inventory": {Risk: "low"}, "process_list": {Risk: "low"}, "network_connections": {Risk: "low"}, "service_list": {Risk: "low"}, "scheduled_tasks": {Risk: "low"}, "windows_event_logs": {Risk: "low"}, "file_exists": {Risk: "low"}, "file_hash": {Risk: "low"},
-	"agent_identity": {Risk: "low"}, "list_directory": {Risk: "low"}, "read_file_chunk": {Risk: "medium"}, "copy_file": {Risk: "medium"},
+	"inventory": {Risk: "low"}, "process_list": {Risk: "low"}, "process_detail": {Risk: "low"}, "process_tree": {Risk: "low"}, "network_connections": {Risk: "low"}, "service_list": {Risk: "low"}, "scheduled_tasks": {Risk: "low"}, "windows_event_logs": {Risk: "low"}, "file_exists": {Risk: "low"}, "file_hash": {Risk: "low"},
+	"agent_identity": {Risk: "low"}, "autoruns_collect": {Risk: "low"}, "registry_query": {Risk: "low"}, "listening_ports": {Risk: "low"}, "list_directory": {Risk: "low"}, "read_file_chunk": {Risk: "medium"}, "copy_file": {Risk: "medium"}, "collect_file": {Risk: "medium"},
 	"quarantine_file": {Risk: "high", Destructive: true}, "delete_file": {Risk: "high", Destructive: true}, "kill_process": {Risk: "high", Destructive: true}, "service_control": {Risk: "high", Destructive: true},
 }
 
@@ -64,8 +64,14 @@ func executeAllowed(taskType string, args map[string]any) (map[string]any, error
 		return map[string]any{"inventory": collect.HostInventory()}, nil
 	case "process_list":
 		return map[string]any{"processes": processList()}, nil
+	case "process_detail":
+		return processDetail(args)
+	case "process_tree":
+		return processTree(args)
 	case "network_connections":
 		return map[string]any{"connections": networkConnections()}, nil
+	case "listening_ports":
+		return listeningPorts()
 	case "service_list":
 		return map[string]any{"services": serviceList()}, nil
 	case "scheduled_tasks":
@@ -91,12 +97,18 @@ func executeAllowed(taskType string, args map[string]any) (map[string]any, error
 		return map[string]any{"path": path, "sha256": h}, nil
 	case "agent_identity":
 		return agentIdentity()
+	case "autoruns_collect":
+		return autorunsCollect()
+	case "registry_query":
+		return registryQuery(args)
 	case "list_directory":
 		return listDirectory(args)
 	case "read_file_chunk":
 		return readFileChunk(args)
 	case "copy_file":
 		return copyFileTask(args)
+	case "collect_file":
+		return collectFile(args)
 	case "quarantine_file":
 		return quarantineFile(args)
 	case "delete_file":
@@ -143,6 +155,71 @@ func processList() []map[string]any {
 	return out
 }
 
+func processDetail(args map[string]any) (map[string]any, error) {
+	pid := intArg(args, "pid", 0)
+	if pid <= 0 {
+		return nil, errors.New("pid required")
+	}
+	if runtime.GOOS == "windows" {
+		query := fmt.Sprintf("Get-CimInstance Win32_Process -Filter \"ProcessId=%d\" | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath,CommandLine,CreationDate | ConvertTo-Json -Compress", pid)
+		out, err := runCommand(15*time.Second, "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", query)
+		return map[string]any{"pid": pid, "format": "win32_process_json", "output": out}, err
+	}
+	base := filepath.Join("/proc", strconv.Itoa(pid))
+	comm, _ := os.ReadFile(filepath.Join(base, "comm"))
+	cmd, _ := os.ReadFile(filepath.Join(base, "cmdline"))
+	exe, _ := os.Readlink(filepath.Join(base, "exe"))
+	stat, _ := os.ReadFile(filepath.Join(base, "stat"))
+	ppid := ""
+	fields := strings.Fields(string(stat))
+	if len(fields) > 3 {
+		ppid = fields[3]
+	}
+	res := map[string]any{"pid": pid, "ppid": ppid, "name": strings.TrimSpace(string(comm)), "cmdline": strings.ReplaceAll(string(cmd), "\x00", " "), "exe": exe}
+	if exe != "" {
+		if h, err := hashFile(exe); err == nil {
+			res["exe_sha256"] = h
+		}
+	}
+	return res, nil
+}
+
+func processTree(args map[string]any) (map[string]any, error) {
+	pid := intArg(args, "pid", 0)
+	if pid <= 0 {
+		return nil, errors.New("pid required")
+	}
+	if runtime.GOOS == "windows" {
+		query := fmt.Sprintf("$p=%d; Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -eq $p -or $_.ParentProcessId -eq $p } | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath,CommandLine | ConvertTo-Json -Compress", pid)
+		out, err := runCommand(20*time.Second, "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", query)
+		return map[string]any{"pid": pid, "format": "win32_process_tree_json", "output": out}, err
+	}
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil, err
+	}
+	nodes := []map[string]any{}
+	for _, e := range entries {
+		cpid, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		stat, _ := os.ReadFile(filepath.Join("/proc", e.Name(), "stat"))
+		fields := strings.Fields(string(stat))
+		if len(fields) <= 3 {
+			continue
+		}
+		ppid, _ := strconv.Atoi(fields[3])
+		if cpid != pid && ppid != pid {
+			continue
+		}
+		comm, _ := os.ReadFile(filepath.Join("/proc", e.Name(), "comm"))
+		cmd, _ := os.ReadFile(filepath.Join("/proc", e.Name(), "cmdline"))
+		nodes = append(nodes, map[string]any{"pid": cpid, "ppid": ppid, "name": strings.TrimSpace(string(comm)), "cmdline": strings.ReplaceAll(string(cmd), "\x00", " ")})
+	}
+	return map[string]any{"pid": pid, "nodes": nodes}, nil
+}
+
 func networkConnections() []map[string]any {
 	if runtime.GOOS == "windows" {
 		out, err := runCommand(15*time.Second, "netstat.exe", "-ano")
@@ -158,6 +235,39 @@ func networkConnections() []map[string]any {
 		out = append(out, map[string]any{"interface": iface.Name, "flags": iface.Flags.String()})
 	}
 	return out
+}
+
+func listeningPorts() (map[string]any, error) {
+	if runtime.GOOS == "windows" {
+		out, err := runCommand(15*time.Second, "netstat.exe", "-ano", "-p", "tcp")
+		return map[string]any{"platform": "windows", "format": "netstat_ano", "output": out}, err
+	}
+	files := []string{"/proc/net/tcp", "/proc/net/tcp6"}
+	rows := []map[string]any{}
+	for _, file := range files {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		for i, line := range strings.Split(string(data), "\n") {
+			if i == 0 || strings.TrimSpace(line) == "" {
+				continue
+			}
+			fields := strings.Fields(line)
+			if len(fields) < 10 || fields[3] != "0A" {
+				continue
+			}
+			local := fields[1]
+			parts := strings.Split(local, ":")
+			port := 0
+			if len(parts) == 2 {
+				p64, _ := strconv.ParseInt(parts[1], 16, 32)
+				port = int(p64)
+			}
+			rows = append(rows, map[string]any{"source": file, "local_raw": local, "port": port, "state": "LISTEN", "inode": fields[9]})
+		}
+	}
+	return map[string]any{"platform": runtime.GOOS, "listeners": rows}, nil
 }
 
 func serviceList() []map[string]any {
@@ -242,6 +352,50 @@ func windowsEventLogs(args map[string]any) (map[string]any, error) {
 	return platformWindowsEventLogs(profile, maxEvents)
 }
 
+func registryQuery(args map[string]any) (map[string]any, error) {
+	key, _ := args["key"].(string)
+	if key == "" {
+		return nil, errors.New("key required")
+	}
+	if runtime.GOOS != "windows" {
+		return map[string]any{"platform": runtime.GOOS, "unsupported": true, "reason": "registry_query is only available on Windows", "key": key}, nil
+	}
+	cmdArgs := []string{"query", key}
+	if boolArg(args, "recursive", false) {
+		cmdArgs = append(cmdArgs, "/s")
+	}
+	out, err := runCommand(20*time.Second, "reg.exe", cmdArgs...)
+	return map[string]any{"platform": "windows", "key": key, "recursive": boolArg(args, "recursive", false), "output": out}, err
+}
+
+func autorunsCollect() (map[string]any, error) {
+	if runtime.GOOS == "windows" {
+		ps := `$ErrorActionPreference="SilentlyContinue"; $r=[ordered]@{}; $keys=@("HKLM:\Software\Microsoft\Windows\CurrentVersion\Run","HKLM:\Software\Microsoft\Windows\CurrentVersion\RunOnce","HKCU:\Software\Microsoft\Windows\CurrentVersion\Run","HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce"); $r.run_keys=@(); foreach($k in $keys){ $item=Get-ItemProperty -Path $k; if($item){ $r.run_keys += @{path=$k; values=$item} } }; $r.startup_folders=@(); @("$env:ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp","$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup") | % { if(Test-Path $_){ $r.startup_folders += @{path=$_; entries=(Get-ChildItem $_ | Select Name,FullName,Length,LastWriteTime)} } }; $r.services=Get-CimInstance Win32_Service | Select Name,State,StartMode,PathName,StartName; $r.scheduled_tasks=schtasks.exe /query /fo csv /v; $r | ConvertTo-Json -Depth 5 -Compress`
+		out, err := runCommand(30*time.Second, "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps)
+		return map[string]any{"platform": "windows", "format": "autoruns_json", "output": out}, err
+	}
+	paths := []string{"/etc/crontab", "/etc/cron.d", "/etc/cron.daily", "/etc/cron.hourly", "/etc/cron.monthly", "/etc/cron.weekly", "/etc/systemd/system", "/lib/systemd/system", "/usr/lib/systemd/system", "/etc/profile", "/etc/profile.d"}
+	items := []map[string]any{}
+	for _, path := range paths {
+		info, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		if info.IsDir() {
+			entries, _ := os.ReadDir(path)
+			for _, e := range entries {
+				items = append(items, map[string]any{"path": filepath.Join(path, e.Name()), "source": path, "is_dir": e.IsDir()})
+				if len(items) >= 500 {
+					return map[string]any{"platform": runtime.GOOS, "items": items, "truncated": true}, nil
+				}
+			}
+		} else {
+			items = append(items, map[string]any{"path": path, "source": path, "size": info.Size(), "mod_time": info.ModTime().UTC().Format(time.RFC3339)})
+		}
+	}
+	return map[string]any{"platform": runtime.GOOS, "items": items}, nil
+}
+
 func agentIdentity() (map[string]any, error) {
 	if runtime.GOOS == "windows" {
 		out, err := runCommand(5*time.Second, "whoami.exe", "/all")
@@ -321,6 +475,46 @@ func copyFileTask(args map[string]any) (map[string]any, error) {
 		return nil, err
 	}
 	return map[string]any{"source_path": src, "destination_path": dst, "bytes_copied": bytes}, nil
+}
+
+func collectFile(args map[string]any) (map[string]any, error) {
+	path, _ := args["path"].(string)
+	if path == "" {
+		return nil, errors.New("path required")
+	}
+	maxBytes := intArg(args, "max_bytes", 10*1024*1024)
+	if maxBytes <= 0 || maxBytes > 10*1024*1024 {
+		maxBytes = 10 * 1024 * 1024
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if info.IsDir() {
+		return nil, errors.New("path is a directory")
+	}
+	if info.Size() > int64(maxBytes) {
+		return map[string]any{"path": path, "size": info.Size(), "max_bytes": maxBytes, "blocked": true, "reason": "file_too_large"}, ErrBlocked
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	h := sha256.Sum256(data)
+	sha := hex.EncodeToString(h[:])
+	return map[string]any{
+		"path":   path,
+		"size":   len(data),
+		"sha256": sha,
+		"upload_file": map[string]any{
+			"kind":           "file",
+			"path":           path,
+			"sha256":         sha,
+			"size":           len(data),
+			"content_base64": base64.StdEncoding.EncodeToString(data),
+			"metadata":       map[string]any{"mod_time": info.ModTime().UTC().Format(time.RFC3339), "mode": info.Mode().String()},
+		},
+	}, nil
 }
 
 func quarantineFile(args map[string]any) (map[string]any, error) {
@@ -413,6 +607,18 @@ func intArg(args map[string]any, key string, fallback int) int {
 		}
 	}
 	return fallback
+}
+
+func boolArg(args map[string]any, key string, fallback bool) bool {
+	v, ok := args[key]
+	if !ok {
+		return fallback
+	}
+	b, ok := v.(bool)
+	if !ok {
+		return fallback
+	}
+	return b
 }
 
 func hashFile(path string) (string, error) {

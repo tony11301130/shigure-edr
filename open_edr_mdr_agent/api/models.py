@@ -102,6 +102,21 @@ class TaskResultRequest(BaseModel):
     error: Optional[str] = None
 
 
+class EvidenceUploadRequest(BaseModel):
+    kind: str = "file"
+    path: Optional[str] = None
+    sha256: str
+    size: int = Field(ge=0)
+    content_base64: str
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class EvidenceUploadResponse(BaseModel):
+    raw_ref: str
+    sha256: str
+    size: int
+
+
 class AgentRecord(BaseModel):
     tenant_id: str
     agent_id: str

@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from open_edr_mdr_agent.api.cases import CaseEvidenceRecord, CaseRecord
 from open_edr_mdr_agent.api.hunts import HuntRecord, HuntRunRecord
-from open_edr_mdr_agent.api.models import AgentConfig, AgentRecord, TaskRecord
+from open_edr_mdr_agent.api.models import AgentConfig, AgentRecord, EvidenceUploadRequest, TaskRecord
 from open_edr_mdr_agent.core.schemas import Alert, NormalizedEvent
 
 
@@ -351,6 +351,26 @@ class SQLiteStore:
                 (status, utc_now(), json.dumps(result), error, raw_ref, raw_hash, tenant_id, agent_id, task_id),
             )
 
+    def store_agent_evidence(self, tenant_id: str, agent_id: str, req: EvidenceUploadRequest) -> Dict[str, Any]:
+        file_sha = req.sha256.lower()
+        payload = {
+            "agent_id": agent_id,
+            "kind": req.kind,
+            "path": req.path,
+            "sha256": file_sha,
+            "size": req.size,
+            "content_base64": req.content_base64,
+            "metadata": req.metadata,
+        }
+        object_id = f"{agent_id}:{req.kind}:{req.path or file_sha}:{file_sha[:16]}"
+        raw_ref, _payload_hash, payload_json = self._raw_evidence_values(tenant_id, f"agent_{req.kind}", object_id, payload)
+        with self.connect() as conn:
+            conn.execute(
+                "insert or ignore into raw_evidence(raw_ref, tenant_id, kind, sha256, payload_json, created_at) values (?, ?, ?, ?, ?, ?)",
+                (raw_ref, tenant_id, f"agent_{req.kind}", file_sha, payload_json, utc_now()),
+            )
+        return {"raw_ref": raw_ref, "sha256": file_sha, "size": req.size}
+
     def expire_stale_tasks(self, tenant_id: str) -> int:
         now = datetime.now(timezone.utc)
         expired: list[str] = []
@@ -368,6 +388,22 @@ class SQLiteStore:
                     [(utc_now(), tenant_id, task_id) for task_id in expired],
                 )
         return len(expired)
+
+    def cancel_task(self, tenant_id: str, task_id: str) -> bool:
+        with self.connect() as conn:
+            cur = conn.execute(
+                "update tasks set status='cancelled', completed_at=?, error='cancelled_by_admin' where tenant_id=? and task_id=? and status in ('queued','claimed')",
+                (utc_now(), tenant_id, task_id),
+            )
+        return cur.rowcount > 0
+
+    def retry_task(self, tenant_id: str, task_id: str) -> bool:
+        with self.connect() as conn:
+            cur = conn.execute(
+                "update tasks set status='queued', claimed_at=null, completed_at=null, error=null where tenant_id=? and task_id=? and status in ('failed','timed_out','cancelled','blocked_by_policy')",
+                (tenant_id, task_id),
+            )
+        return cur.rowcount > 0
 
     def list_agents(self, tenant_id: str, status: Optional[str] = None) -> List[Dict[str, Any]]:
         q = "select * from agents where tenant_id=?"

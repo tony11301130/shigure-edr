@@ -134,7 +134,7 @@ func runCycle(client *agentapi.Client, s *state.State, spoolPath string, cfg age
 	inv := collect.HostInventory()
 	heartbeat, err := client.Heartbeat(s.AgentID, s.AgentToken, map[string]any{
 		"host": inv.Host, "ip_address": inv.IPAddress, "os": inv.OS, "agent_version": version,
-		"health": map[string]any{"status": "ok"},
+		"health": agentHealth(spoolPath),
 	})
 	if err != nil {
 		log.Printf("heartbeat failed, continuing so telemetry can spool if needed: %v", err)
@@ -173,6 +173,23 @@ func heartbeatConfig(h *agentapi.HeartbeatResponse) *agentapi.AgentConfig {
 	return &h.Config
 }
 
+func agentHealth(spoolPath string) map[string]any {
+	spoolSize := int64(0)
+	if info, err := os.Stat(spoolPath); err == nil {
+		spoolSize = info.Size()
+	}
+	return map[string]any{
+		"status":            "ok",
+		"pid":               os.Getpid(),
+		"version":           version,
+		"runtime_os":        runtime.GOOS,
+		"runtime_arch":      runtime.GOARCH,
+		"spool_path":        spoolPath,
+		"spool_bytes":       spoolSize,
+		"task_capabilities": len(tasks.Allowed),
+	}
+}
+
 func mergeCLIOverrides(cfg agentapi.AgentConfig, forceDemo bool, fallbackMaxSnapshotEvents int) agentapi.AgentConfig {
 	if cfg.TaskPollSeconds <= 0 {
 		cfg.TaskPollSeconds = 15
@@ -194,6 +211,17 @@ func mergeCLIOverrides(cfg agentapi.AgentConfig, forceDemo bool, fallbackMaxSnap
 
 func executeAndReport(client *agentapi.Client, s *state.State, spoolPath string, task agentapi.Task) {
 	result, err := tasks.Execute(task.TaskType, task.Args)
+	if err == nil {
+		if upload, ok := result["upload_file"].(map[string]any); ok {
+			resp, uploadErr := uploadTaskEvidence(client, s, upload)
+			if uploadErr != nil {
+				err = uploadErr
+			} else {
+				result["evidence"] = map[string]any{"raw_ref": resp.RawRef, "sha256": resp.SHA256, "size": resp.Size}
+			}
+			delete(result, "upload_file")
+		}
+	}
 	status := "succeeded"
 	msg := ""
 	if err != nil {
@@ -211,6 +239,27 @@ func executeAndReport(client *agentapi.Client, s *state.State, spoolPath string,
 		}
 		log.Printf("task result upload failed task_id=%s, spooled: %v", task.TaskID, sendErr)
 	}
+}
+
+func uploadTaskEvidence(client *agentapi.Client, s *state.State, upload map[string]any) (*agentapi.EvidenceUploadResponse, error) {
+	kind, _ := upload["kind"].(string)
+	path, _ := upload["path"].(string)
+	sha, _ := upload["sha256"].(string)
+	content, _ := upload["content_base64"].(string)
+	size := int64(0)
+	switch v := upload["size"].(type) {
+	case int:
+		size = int64(v)
+	case int64:
+		size = v
+	case float64:
+		size = int64(v)
+	}
+	metadata := map[string]any{}
+	if m, ok := upload["metadata"].(map[string]any); ok {
+		metadata = m
+	}
+	return client.UploadEvidence(s.AgentID, s.AgentToken, agentapi.EvidenceUploadRequest{Kind: kind, Path: path, SHA256: sha, Size: size, ContentBase64: content, Metadata: metadata})
 }
 
 func defaultStatePath() string {

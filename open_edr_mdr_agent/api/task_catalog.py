@@ -117,6 +117,60 @@ READONLY_TASK_CATALOG: List[Dict[str, Any]] = [
         "args_schema": {"source_path": {"type": "string", "required": True}, "destination_path": {"type": "string", "required": True}},
     },
     {
+        "task_type": "listening_ports",
+        "title": "Listening ports",
+        "description": "Return listening TCP ports and owning PID where available.",
+        "platforms": ["windows", "linux"],
+        "risk": "low",
+        "destructive": False,
+        "args_schema": {},
+    },
+    {
+        "task_type": "registry_query",
+        "title": "Registry query",
+        "description": "Read a Windows registry key using reg.exe query; unsupported on non-Windows platforms.",
+        "platforms": ["windows"],
+        "risk": "low",
+        "destructive": False,
+        "args_schema": {"key": {"type": "string", "required": True}, "recursive": {"type": "boolean", "default": False}},
+    },
+    {
+        "task_type": "autoruns_collect",
+        "title": "Autoruns collection",
+        "description": "Collect common persistence locations such as Run keys, services, scheduled tasks, startup folders, systemd and cron.",
+        "platforms": ["windows", "linux"],
+        "risk": "low",
+        "destructive": False,
+        "args_schema": {},
+    },
+    {
+        "task_type": "process_tree",
+        "title": "Process tree",
+        "description": "Return bounded parent/child process context for a PID.",
+        "platforms": ["windows", "linux"],
+        "risk": "low",
+        "destructive": False,
+        "args_schema": {"pid": {"type": "integer", "minimum": 1, "maximum": 2147483647, "required": True}},
+    },
+    {
+        "task_type": "process_detail",
+        "title": "Process detail",
+        "description": "Return details for a specific process ID, including command line and executable hash when available.",
+        "platforms": ["windows", "linux"],
+        "risk": "low",
+        "destructive": False,
+        "args_schema": {"pid": {"type": "integer", "minimum": 1, "maximum": 2147483647, "required": True}},
+    },
+    {
+        "task_type": "collect_file",
+        "title": "Collect file evidence",
+        "description": "Upload a bounded file from the endpoint to server raw evidence storage.",
+        "platforms": ["windows", "linux"],
+        "risk": "medium",
+        "destructive": False,
+        "args_schema": {"path": {"type": "string", "required": True}, "max_bytes": {"type": "integer", "minimum": 1, "maximum": 10485760, "default": 10485760}},
+    },
+    {
         "task_type": "quarantine_file",
         "title": "Quarantine file",
         "description": "Move a file into an analyst-specified quarantine directory on the endpoint.",
@@ -181,6 +235,9 @@ def validate_task_args(task_type: str, args: Dict[str, Any]) -> None:
         value = args[name]
         if spec.get("type") == "string" and not isinstance(value, str):
             raise TaskArgumentError(f"task_arg_{name}_invalid")
+        if spec.get("type") == "boolean":
+            if not isinstance(value, bool):
+                raise TaskArgumentError(f"task_arg_{name}_invalid")
         if spec.get("type") == "integer":
             if not isinstance(value, int) or isinstance(value, bool):
                 raise TaskArgumentError(f"task_arg_{name}_invalid")
