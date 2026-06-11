@@ -27,7 +27,7 @@ func installService(serviceName, displayName, server, enrollToken, statePath, sp
 	if err := os.MkdirAll(filepath.Dir(spoolPath), 0700); err != nil {
 		return fmt.Errorf("create spool dir: %w", err)
 	}
-	installedExe := filepath.Join(installDir, "open-edr-agent.exe")
+	installedExe := filepath.Join(installDir, "shiori-agent.exe")
 	if !samePath(exe, installedExe) {
 		if err := copyExecutable(exe, installedExe); err != nil {
 			return err

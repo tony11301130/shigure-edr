@@ -43,8 +43,8 @@ func main() {
 	interval := flag.Duration("interval", 15*time.Second, "fallback loop interval before backend config is received")
 	installSvc := flag.Bool("install-service", false, "install as Windows service and exit")
 	uninstallSvc := flag.Bool("uninstall-service", false, "uninstall Windows service and exit")
-	serviceName := flag.String("service-name", "OpenEDRMDRAgent", "Windows service name")
-	serviceDisplayName := flag.String("service-display-name", "Open EDR MDR Agent", "Windows service display name")
+	serviceName := flag.String("service-name", "ShioriAgent", "Windows service name")
+	serviceDisplayName := flag.String("service-display-name", "Shiori Agent", "Windows service display name")
 	installDir := flag.String("install-dir", defaultInstallDir(), "Windows service binary install directory")
 	flag.Parse()
 
@@ -266,9 +266,9 @@ func uploadTaskEvidence(client *agentapi.Client, s *state.State, upload map[stri
 func defaultInstallDir() string {
 	if runtime.GOOS == "windows" {
 		if programFiles := os.Getenv("ProgramFiles"); programFiles != "" {
-			return filepath.Join(programFiles, "OpenEDRMDR")
+			return filepath.Join(programFiles, "Shiori")
 		}
-		return `C:\Program Files\OpenEDRMDR`
+		return `C:\Program Files\Shiori`
 	}
 	return "."
 }
@@ -276,19 +276,19 @@ func defaultInstallDir() string {
 func defaultDataDir() string {
 	if runtime.GOOS == "windows" {
 		if programData := os.Getenv("ProgramData"); programData != "" {
-			return filepath.Join(programData, "OpenEDRMDR")
+			return filepath.Join(programData, "Shiori")
 		}
-		return `C:\ProgramData\OpenEDRMDR`
+		return `C:\ProgramData\Shiori`
 	}
 	base, err := os.UserConfigDir()
 	if err != nil {
 		base = "."
 	}
-	return filepath.Join(base, "open-edr-mdr-agent")
+	return filepath.Join(base, "shiori-agent")
 }
 
 func defaultStatePath() string {
-	return filepath.Join(defaultDataDir(), "open-edr-scoreboard.json")
+	return filepath.Join(defaultDataDir(), "shiori-agent-state.json")
 }
 
 func defaultSpoolPath() string {

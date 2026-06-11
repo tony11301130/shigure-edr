@@ -11,7 +11,7 @@ from rich.table import Table
 from open_edr_mdr_agent.adapters.local_json import LocalJsonProvider
 from open_edr_mdr_agent.core.provider import CompositeEndpointProvider
 
-app = typer.Typer(help="Open EDR/MDR agent fusion prototype")
+app = typer.Typer(help="Shiori endpoint security fusion prototype")
 
 
 def provider(data_dir: str = "./sample-data") -> CompositeEndpointProvider:

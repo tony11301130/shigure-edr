@@ -43,7 +43,7 @@ DEFAULT_ADMIN_TOKEN = os.environ.get("OPEN_EDR_MDR_ADMIN_TOKEN", "dev-admin-toke
 
 
 def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = True) -> FastAPI:
-    app = FastAPI(title="Open EDR MDR Agent API", version="0.1.0")
+    app = FastAPI(title="Shiori API", version="0.1.0")
     store = SQLiteStore(db_path)
     app.state.custom_rules = load_rules(os.environ.get("OPEN_EDR_MDR_RULES"))
     if create_dev_token:
@@ -416,33 +416,33 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
 
     @app.get("/api/v1/admin/downloads/agent/windows")
     def download_windows_agent(_admin=Depends(_admin_auth)):
-        path = Path(os.environ.get("OPEN_EDR_MDR_WINDOWS_AGENT_EXE", "/tmp/open-edr-agent.exe"))
+        path = Path(os.environ.get("SHIORI_WINDOWS_AGENT_EXE") or os.environ.get("OPEN_EDR_MDR_WINDOWS_AGENT_EXE", "/tmp/shiori-agent.exe"))
         if not path.exists() or not path.is_file():
             raise HTTPException(status_code=404, detail="windows_agent_binary_not_found")
-        return FileResponse(path, media_type="application/vnd.microsoft.portable-executable", filename="open-edr-agent.exe")
+        return FileResponse(path, media_type="application/vnd.microsoft.portable-executable", filename="shiori-agent.exe")
 
     def _deployment_config(tenant_id: str, server_url: str, enrollment_token: str) -> dict:
         return {
             "tenant_id": tenant_id,
             "server_url": server_url,
             "enrollment_token": enrollment_token,
-            "agent_filename": "open-edr-agent.exe",
-            "install_dir": "C:\\Program Files\\OpenEDRMDR",
-            "data_dir": "C:\\ProgramData\\OpenEDRMDR",
-            "identity_file": "C:\\ProgramData\\OpenEDRMDR\\open-edr-scoreboard.json",
-            "spool_file": "C:\\ProgramData\\OpenEDRMDR\\spool.jsonl",
-            "install_command": f".\\open-edr-agent.exe --install-service --server {server_url} --enroll-token {enrollment_token}",
+            "agent_filename": "shiori-agent.exe",
+            "install_dir": "C:\\Program Files\\Shiori",
+            "data_dir": "C:\\ProgramData\\Shiori",
+            "identity_file": "C:\\ProgramData\\Shiori\\shiori-agent-state.json",
+            "spool_file": "C:\\ProgramData\\Shiori\\spool.jsonl",
+            "install_command": f".\\shiori-agent.exe --install-service --server {server_url} --enroll-token {enrollment_token}",
             "package_install_command": ".\\install.ps1",
-            "start_command": "sc.exe start OpenEDRMDRAgent",
+            "start_command": "sc.exe start ShioriAgent",
             "enrollment_model": {
                 "stage_1": "This shared enrollment token is only for first registration with the server.",
-                "stage_2": "After successful enrollment, the server issues a per-endpoint credential stored as C:\\ProgramData\\OpenEDRMDR\\open-edr-scoreboard.json.",
+                "stage_2": "After successful enrollment, the server issues a per-endpoint credential stored as C:\\ProgramData\\Shiori\\shiori-agent-state.json.",
                 "stage_3": "All heartbeat, event ingest, task claim, and result upload calls use the per-endpoint credential, not the shared enrollment token.",
             },
             "notes": [
                 "Run install.ps1 from an elevated PowerShell prompt on the Windows endpoint.",
                 "Endpoint traffic is outbound-only; server queues jobs and agent polls /tasks/claim.",
-                "The installer copies the service binary to C:\\Program Files\\OpenEDRMDR and stores endpoint state/spool files under C:\\ProgramData\\OpenEDRMDR.",
+                "The installer copies the service binary to C:\\Program Files\\Shiori and stores endpoint state/spool files under C:\\ProgramData\\Shiori.",
                 "Protect this package because it contains an enrollment token. The token should be short-lived or limited-use in production.",
             ],
         }
@@ -451,45 +451,45 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
     def download_agent_config(tenant_id: str = "default", server_url: str = "http://127.0.0.1:8765", max_uses: Optional[int] = None, _admin=Depends(_admin_auth)):
         token = store.create_enrollment_token(tenant_id, max_uses=max_uses)
         config = _deployment_config(tenant_id, server_url, token)
-        return JSONResponse(config, headers={"Content-Disposition": "attachment; filename=open-edr-agent-config.json"})
+        return JSONResponse(config, headers={"Content-Disposition": "attachment; filename=shiori-agent-config.json"})
 
     @app.get("/api/v1/admin/downloads/agent/package")
     def download_agent_package(tenant_id: str = "default", server_url: str = "http://127.0.0.1:8765", max_uses: Optional[int] = None, _admin=Depends(_admin_auth)):
-        agent_path = Path(os.environ.get("OPEN_EDR_MDR_WINDOWS_AGENT_EXE", "/tmp/open-edr-agent.exe"))
+        agent_path = Path(os.environ.get("SHIORI_WINDOWS_AGENT_EXE") or os.environ.get("OPEN_EDR_MDR_WINDOWS_AGENT_EXE", "/tmp/shiori-agent.exe"))
         if not agent_path.exists() or not agent_path.is_file():
             raise HTTPException(status_code=404, detail="windows_agent_binary_not_found")
         token = store.create_enrollment_token(tenant_id, max_uses=max_uses)
         config = _deployment_config(tenant_id, server_url, token)
-        install_ps1 = r"""$ErrorActionPreference = \"Stop\"
+        install_ps1 = r"""$ErrorActionPreference = "Stop"
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Agent = Join-Path $Here \"open-edr-agent.exe\"
-$ConfigPath = Join-Path $Here \"open-edr-agent-config.json\"
-if (!(Test-Path $Agent)) { throw \"open-edr-agent.exe not found\" }
-if (!(Test-Path $ConfigPath)) { throw \"open-edr-agent-config.json not found\" }
+$Agent = Join-Path $Here "shiori-agent.exe"
+$ConfigPath = Join-Path $Here "shiori-agent-config.json"
+if (!(Test-Path $Agent)) { throw "shiori-agent.exe not found" }
+if (!(Test-Path $ConfigPath)) { throw "shiori-agent-config.json not found" }
 $Config = Get-Content $ConfigPath -Raw | ConvertFrom-Json
-if (!$Config.server_url) { throw \"server_url missing from config\" }
-if (!$Config.enrollment_token) { throw \"enrollment_token missing from config\" }
+if (!$Config.server_url) { throw "server_url missing from config" }
+if (!$Config.enrollment_token) { throw "enrollment_token missing from config" }
 $InstallDir = $Config.install_dir
 $DataDir = $Config.data_dir
-if (!$InstallDir) { $InstallDir = "C:\\Program Files\\OpenEDRMDR" }
-if (!$DataDir) { $DataDir = "C:\\ProgramData\\OpenEDRMDR" }
-Write-Host \"Installing Open EDR MDR Agent for $($Config.server_url)\"
-& $Agent --install-service --server $Config.server_url --enroll-token $Config.enrollment_token --install-dir $InstallDir --state (Join-Path $DataDir "open-edr-scoreboard.json") --spool (Join-Path $DataDir "spool.jsonl")
-sc.exe start OpenEDRMDRAgent
-Write-Host \"Installed. Service binary: $InstallDir\open-edr-agent.exe\"
-Write-Host \"Endpoint state: $DataDir\open-edr-scoreboard.json\"
+if (!$InstallDir) { $InstallDir = "C:\Program Files\Shiori" }
+if (!$DataDir) { $DataDir = "C:\ProgramData\Shiori" }
+Write-Host "Installing Shiori Agent for $($Config.server_url)"
+& $Agent --install-service --server $Config.server_url --enroll-token $Config.enrollment_token --install-dir $InstallDir --state (Join-Path $DataDir "shiori-agent-state.json") --spool (Join-Path $DataDir "spool.jsonl")
+sc.exe start ShioriAgent
+Write-Host "Installed. Service binary: $(Join-Path $InstallDir 'shiori-agent.exe')"
+Write-Host "Endpoint state: $(Join-Path $DataDir 'shiori-agent-state.json')"
 """
-        readme = r"""Open EDR MDR Agent deployment package
+        readme = r"""Shiori Agent deployment package
 
 Files:
-- open-edr-agent.exe: Windows endpoint service binary
-- open-edr-agent-config.json: shared first-enrollment config
+- shiori-agent.exe: Windows endpoint service binary
+- shiori-agent-config.json: shared first-enrollment config
 - install.ps1: elevated PowerShell installer
 
 Enrollment model:
 1. The config contains a shared enrollment token, similar to Fleet/osquery enroll secret.
 2. On first successful registration, the server creates the endpoint record and returns a per-endpoint credential.
-3. The endpoint stores that credential as C:\ProgramData\OpenEDRMDR\open-edr-scoreboard.json and uses it for future authentication.
+3. The endpoint stores that credential as C:\ProgramData\Shiori\shiori-agent-state.json and uses it for future authentication.
 4. The shared enrollment token should not be used as the long-term endpoint identity.
 
 Run from elevated PowerShell:
@@ -498,15 +498,15 @@ Run from elevated PowerShell:
 """
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-            zf.write(agent_path, "open-edr-agent.exe")
-            zf.writestr("open-edr-agent-config.json", json.dumps(config, ensure_ascii=False, indent=2))
+            zf.write(agent_path, "shiori-agent.exe")
+            zf.writestr("shiori-agent-config.json", json.dumps(config, ensure_ascii=False, indent=2))
             zf.writestr("install.ps1", install_ps1)
             zf.writestr("README.txt", readme)
         buf.seek(0)
         return Response(
             buf.getvalue(),
             media_type="application/zip",
-            headers={"Content-Disposition": "attachment; filename=open-edr-agent-package.zip"},
+            headers={"Content-Disposition": "attachment; filename=shiori-agent-package.zip"},
         )
 
     @app.get("/api/v1/admin/enrollment-tokens")
@@ -590,7 +590,7 @@ UI_HTML = r"""
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Open EDR MDR // SOC Console</title>
+  <title>Shiori // SOC Console</title>
   <style>
     :root{
       color-scheme:dark;
@@ -618,7 +618,7 @@ UI_HTML = r"""
 <body>
 <div class="app">
   <aside class="rail">
-    <div class="brand"><div class="sigil"></div><div><h1>OPEN EDR MDR</h1><small>endpoint response console</small></div></div>
+    <div class="brand"><div class="sigil"></div><div><h1>SHIORI</h1><small>endpoint response console</small></div></div>
     <nav class="nav"><a href="#overview">Overview</a><a href="#endpoints">Endpoints</a><a href="#response">Response</a><a href="#detections">Detections</a><a href="#hunt">Hunt</a><a href="#evidence">Evidence</a></nav>
     <div class="authbox">
       <label for="tenant">Tenant</label><input id="tenant" value="default" />
@@ -674,7 +674,7 @@ function presetInventory(){ $('taskType').value='inventory'; $('taskArgs').value
 async function quickInventory(agentId){$('taskAgent').value=agentId;presetInventory();await createTask()}
 async function hunt(){try{const q=encodeURIComponent($('indicator').value);if(!q)return;$('huntResults').innerHTML='<span class="muted">hunting...</span>';const r=await api(`/api/v1/admin/investigate/hunt?tenant_id=${tenant()}&indicator=${q}&limit=50`);$('huntResults').innerHTML=`<div class="split"><div class="event"><b>Matched hosts</b>${pills(Object.fromEntries((r.hosts||[]).map(h=>[h,'hit'])))}</div><div class="event"><b>Event count</b><span class="metric" style="font-size:28px">${esc((r.events||[]).length)}</span></div></div>`+table(r.events||[],[['Type',e=>esc(e.event_type)],['Host',e=>esc(e.host)],['Process',e=>esc(e.process_name)],['Signal',e=>esc(e.command_line||e.remote_ip||e.domain||'')]],'no matching events')}catch(e){$('huntResults').innerHTML='<span class="error">'+esc(e.message)+'</span>'}}
 async function downloadBlob(path,filename,statusId){try{const r=await fetch(path,{headers:headers()}); if(!r.ok) throw new Error(await r.text()); const b=await r.blob(); const u=URL.createObjectURL(b); const a=document.createElement('a'); a.href=u; a.download=filename; a.click(); URL.revokeObjectURL(u); $(statusId).innerHTML='<span class="ok">download started</span>'}catch(e){$(statusId).innerHTML='<span class="error">'+esc(e.message)+'</span>'}}
-function deploymentQuery(){const max=$('maxUses').value;return `tenant_id=${tenant()}&server_url=${encodeURIComponent($('serverUrl').value)}`+(max?`&max_uses=${encodeURIComponent(max)}`:'')} function downloadPackage(){downloadBlob('/api/v1/admin/downloads/agent/package?'+deploymentQuery(),'open-edr-agent-package.zip','deployStatus')} function downloadAgent(){downloadBlob('/api/v1/admin/downloads/agent/windows','open-edr-agent.exe','deployStatus')} function downloadConfig(){downloadBlob('/api/v1/admin/downloads/agent-config?'+deploymentQuery(),'open-edr-agent-config.json','deployStatus')}
+function deploymentQuery(){const max=$('maxUses').value;return `tenant_id=${tenant()}&server_url=${encodeURIComponent($('serverUrl').value)}`+(max?`&max_uses=${encodeURIComponent(max)}`:'')} function downloadPackage(){downloadBlob('/api/v1/admin/downloads/agent/package?'+deploymentQuery(),'shiori-agent-package.zip','deployStatus')} function downloadAgent(){downloadBlob('/api/v1/admin/downloads/agent/windows','shiori-agent.exe','deployStatus')} function downloadConfig(){downloadBlob('/api/v1/admin/downloads/agent-config?'+deploymentQuery(),'shiori-agent-config.json','deployStatus')}
 loadAll();
 </script>
 </body>

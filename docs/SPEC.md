@@ -1,4 +1,4 @@
-# Open EDR + MDR System Spec
+# Shiori System Spec
 
 Status: Draft v0.2  
 Owner goal: build an intranet-first owned EDR + MDR system with one installable Windows agent, server-side control/tasking, Fidelis Endpoint toolkit capability parity, deeper threat hunting workflows, and a minimal V1 UI. Multi-tenant/MSSP mode is a later expansion, but schemas/APIs remain tenant-aware from day one.

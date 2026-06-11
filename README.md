@@ -1,4 +1,4 @@
-# Open EDR MDR Agent
+# Shiori Agent
 
 Prototype project for building an in-house EDR + MDR endpoint layer from open-source sensors.
 
@@ -73,17 +73,17 @@ Build the Windows agent and install it as the single branded endpoint service:
 
 ```powershell
 # Cross-build from Linux dev host
-GOOS=windows GOARCH=amd64 go build -o open-edr-agent.exe ./agent/cmd/open-edr-agent
+GOOS=windows GOARCH=amd64 go build -o shiori-agent.exe ./agent/cmd/open-edr-agent
 
 # On Windows as Administrator
-.\open-edr-agent.exe --install-service --server https://edr.example.local --enroll-token <tenant-token>
-sc.exe start OpenEDRMDRAgent
+.\shiori-agent.exe --install-service --server https://edr.example.local --enroll-token <tenant-token>
+sc.exe start ShioriAgent
 
 # The agent binary detects Windows Service context and runs through the Service Control Manager.
 # Running the same binary from a console keeps the foreground loop behavior for diagnostics.
 
 # Remove service if needed
-.\open-edr-agent.exe --uninstall-service
+.\shiori-agent.exe --uninstall-service
 ```
 
 If you do not want a venv, you can also run with `PYTHONPATH=.`:

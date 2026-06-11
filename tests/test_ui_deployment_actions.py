@@ -30,18 +30,18 @@ def test_agent_config_download_contains_enrollment_material(tmp_path):
 
 
 def test_windows_agent_binary_download_uses_configured_path(tmp_path, monkeypatch):
-    exe = tmp_path / "open-edr-agent.exe"
+    exe = tmp_path / "shiori-agent.exe"
     exe.write_bytes(b"MZ-test-agent")
     monkeypatch.setenv("OPEN_EDR_MDR_WINDOWS_AGENT_EXE", str(exe))
     client = TestClient(create_app(tmp_path / "deploy-binary.sqlite3", create_dev_token=True))
     res = client.get("/api/v1/admin/downloads/agent/windows", headers=ADMIN)
     assert res.status_code == 200
     assert res.content == b"MZ-test-agent"
-    assert "open-edr-agent.exe" in res.headers.get("content-disposition", "")
+    assert "shiori-agent.exe" in res.headers.get("content-disposition", "")
 
 
 def test_agent_package_zip_contains_binary_config_and_installer(tmp_path, monkeypatch):
-    exe = tmp_path / "open-edr-agent.exe"
+    exe = tmp_path / "shiori-agent.exe"
     exe.write_bytes(b"MZ-test-agent")
     monkeypatch.setenv("OPEN_EDR_MDR_WINDOWS_AGENT_EXE", str(exe))
     client = TestClient(create_app(tmp_path / "deploy-package.sqlite3", create_dev_token=True))
@@ -52,27 +52,27 @@ def test_agent_package_zip_contains_binary_config_and_installer(tmp_path, monkey
     )
     assert res.status_code == 200
     assert res.headers["content-type"] == "application/zip"
-    assert "open-edr-agent-package.zip" in res.headers.get("content-disposition", "")
+    assert "shiori-agent-package.zip" in res.headers.get("content-disposition", "")
 
     with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
         names = set(zf.namelist())
-        assert {"open-edr-agent.exe", "open-edr-agent-config.json", "install.ps1", "README.txt"} <= names
-        assert zf.read("open-edr-agent.exe") == b"MZ-test-agent"
-        config = json.loads(zf.read("open-edr-agent-config.json"))
+        assert {"shiori-agent.exe", "shiori-agent-config.json", "install.ps1", "README.txt"} <= names
+        assert zf.read("shiori-agent.exe") == b"MZ-test-agent"
+        config = json.loads(zf.read("shiori-agent-config.json"))
         assert config["tenant_id"] == "default"
         assert config["server_url"] == "https://edr.intra"
         assert config["enrollment_token"]
-        assert config["install_dir"] == "C:\\Program Files\\OpenEDRMDR"
-        assert config["data_dir"] == "C:\\ProgramData\\OpenEDRMDR"
-        assert config["identity_file"] == "C:\\ProgramData\\OpenEDRMDR\\open-edr-scoreboard.json"
-        assert config["spool_file"] == "C:\\ProgramData\\OpenEDRMDR\\spool.jsonl"
+        assert config["install_dir"] == "C:\\Program Files\\Shiori"
+        assert config["data_dir"] == "C:\\ProgramData\\Shiori"
+        assert config["identity_file"] == "C:\\ProgramData\\Shiori\\shiori-agent-state.json"
+        assert config["spool_file"] == "C:\\ProgramData\\Shiori\\spool.jsonl"
         assert "per-endpoint credential" in config["enrollment_model"]["stage_2"]
         install_ps1 = zf.read("install.ps1").decode()
         assert "--enroll-token" in install_ps1
         assert "--install-dir" in install_ps1
         assert "--config" not in install_ps1
         readme = zf.read("README.txt").decode()
-        assert "C:\\ProgramData\\OpenEDRMDR\\open-edr-scoreboard.json" in readme
+        assert "C:\\ProgramData\\Shiori\\shiori-agent-state.json" in readme
 
 
 def test_minimal_ui_contains_endpoint_task_and_download_controls(tmp_path):

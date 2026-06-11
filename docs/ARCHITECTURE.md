@@ -20,7 +20,7 @@ Do not start with a kernel/driver agent. Start with open-source sensor fusion:
 ```text
 Sysmon + Wazuh + osquery + Velociraptor + Falco/Tetragon
         ↓
-Open EDR MDR Agent Provider Layer
+Shiori Agent Provider Layer
         ↓
 Fidelis-like MDR tool interface
         ↓

@@ -7,20 +7,20 @@ This gives the agent enough local authority to perform EDR response work after t
 ## Deploy as LocalSystem
 
 ```powershell
-.\open-edr-agent.exe --install-service --server http://192.168.1.93:8765 --enroll-token <token>
-sc.exe start OpenEDRMDRAgent
-sc.exe qc OpenEDRMDRAgent
+.\shiori-agent.exe --install-service --server http://192.168.1.93:8765 --enroll-token <token>
+sc.exe start ShioriAgent
+sc.exe qc ShioriAgent
 ```
 
 Default Windows install paths:
 
 ```text
-Binary: C:\Program Files\OpenEDRMDR\open-edr-agent.exe
-State:  C:\ProgramData\OpenEDRMDR\open-edr-scoreboard.json
-Spool:  C:\ProgramData\OpenEDRMDR\spool.jsonl
+Binary: C:\Program Files\Shiori\shiori-agent.exe
+State:  C:\ProgramData\Shiori\shiori-agent-state.json
+Spool:  C:\ProgramData\Shiori\spool.jsonl
 ```
 
-The service installer may be launched from a temporary deployment directory, but it copies the binary into `C:\Program Files\OpenEDRMDR` before creating the service.
+The service installer may be launched from a temporary deployment directory, but it copies the binary into `C:\Program Files\Shiori` before creating the service.
 
 Confirm:
 

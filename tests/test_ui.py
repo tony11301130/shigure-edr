@@ -7,7 +7,7 @@ def test_minimal_ui_served(tmp_path):
     client = TestClient(create_app(tmp_path / "ui.sqlite3", create_dev_token=True))
     res = client.get("/ui")
     assert res.status_code == 200
-    assert "OPEN EDR MDR" in res.text
+    assert "SHIORI" in res.text
     assert "/api/v1/admin/summary" in res.text
     assert "/api/v1/admin/hunts" in res.text
     assert "/api/v1/admin/raw-evidence/list" in res.text

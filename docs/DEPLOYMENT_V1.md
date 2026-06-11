@@ -31,26 +31,26 @@ curl http://127.0.0.1:8080/health
 The agent communicates outbound to the server. It enrolls once, stores local state, heartbeats for config, uploads telemetry, polls for queued read-only tasks, and uploads task results with raw evidence hashes.
 
 ```powershell
-.\open-edr-agent.exe `
+.\shiori-agent.exe `
   --server https://edr.internal.example `
   --enroll-token <initial-enrollment-token> `
-  --state C:\ProgramData\OpenEDRMDR\open-edr-scoreboard.json `
-  --spool C:\ProgramData\OpenEDRMDR\spool.jsonl
+  --state C:\ProgramData\Shiori\shiori-agent-state.json `
+  --spool C:\ProgramData\Shiori\spool.jsonl
 ```
 
-Install as a Windows Service after validating the command line. The installer copies the service binary to `C:\Program Files\OpenEDRMDR\open-edr-agent.exe` and stores endpoint state/spool files under `C:\ProgramData\OpenEDRMDR` by default:
+Install as a Windows Service after validating the command line. The installer copies the service binary to `C:\Program Files\Shiori\shiori-agent.exe` and stores endpoint state/spool files under `C:\ProgramData\Shiori` by default:
 
 ```powershell
-.\open-edr-agent.exe --install-service --server https://edr.internal.example --enroll-token <initial-enrollment-token>
-Start-Service OpenEDRMDRAgent
-sc.exe qc OpenEDRMDRAgent
+.\shiori-agent.exe --install-service --server https://edr.internal.example --enroll-token <initial-enrollment-token>
+Start-Service ShioriAgent
+sc.exe qc ShioriAgent
 ```
 
 Uninstall if needed:
 
 ```powershell
-Stop-Service OpenEDRMDRAgent
-& 'C:\Program Files\OpenEDRMDR\open-edr-agent.exe' --uninstall-service
+Stop-Service ShioriAgent
+& 'C:\Program Files\Shiori\shiori-agent.exe' --uninstall-service
 ```
 
 ## Analyst validation checklist
