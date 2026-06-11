@@ -37,7 +37,7 @@ func platformWindowsEventLogs(profile string, maxEvents int) (map[string]any, er
 	if !ok {
 		return map[string]any{"blocked": true, "reason": "unsupported windows_event_logs profile", "allowed_profiles": []string{"powershell", "auth", "service", "task"}}, ErrBlocked
 	}
-	cmd := `Get-WinEvent -FilterHashtable @{LogName='` + p.LogName + `'; Id=` + p.IDs + `} -MaxEvents ` + strconv.Itoa(maxEvents) + ` -ErrorAction Stop | Select-Object Id,RecordId,ProviderName,LogName,TimeCreated,Message | ConvertTo-Json -Compress`
+	cmd := `$events = @(Get-WinEvent -FilterHashtable @{LogName='` + p.LogName + `'; Id=` + p.IDs + `} -MaxEvents ` + strconv.Itoa(maxEvents) + ` -ErrorAction SilentlyContinue); $events | Select-Object Id,RecordId,ProviderName,LogName,TimeCreated,Message | ConvertTo-Json -Compress`
 	var rows []taskWinEvent
 	if err := runTaskPowerShellJSON(cmd, &rows); err != nil {
 		return nil, err
