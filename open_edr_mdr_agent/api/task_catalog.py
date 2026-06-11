@@ -1,13 +1,116 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from dataclasses import dataclass, field
+from typing import Any, Dict, Mapping
 
 
 class TaskArgumentError(ValueError):
     """Raised when a queued task does not match its catalog schema."""
 
 
-READONLY_TASK_CATALOG: List[Dict[str, Any]] = [
+@dataclass(frozen=True)
+class ArgumentSpec:
+    """Tiny schema vocabulary supported by endpoint task arguments."""
+
+    type: str
+    required: bool = False
+    enum: tuple[Any, ...] | None = None
+    minimum: int | None = None
+    maximum: int | None = None
+    default: Any = None
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "ArgumentSpec":
+        return cls(
+            type=str(data.get("type", "string")),
+            required=bool(data.get("required", False)),
+            enum=tuple(data["enum"]) if "enum" in data else None,
+            minimum=data.get("minimum"),
+            maximum=data.get("maximum"),
+            default=data.get("default"),
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"type": self.type}
+        if self.enum is not None:
+            out["enum"] = list(self.enum)
+        if self.minimum is not None:
+            out["minimum"] = self.minimum
+        if self.maximum is not None:
+            out["maximum"] = self.maximum
+        if self.default is not None:
+            out["default"] = self.default
+        if self.required:
+            out["required"] = True
+        return out
+
+    def validate(self, name: str, value: Any) -> None:
+        if self.type == "string" and not isinstance(value, str):
+            raise TaskArgumentError(f"task_arg_{name}_invalid")
+        if self.type == "boolean" and not isinstance(value, bool):
+            raise TaskArgumentError(f"task_arg_{name}_invalid")
+        if self.type == "integer":
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise TaskArgumentError(f"task_arg_{name}_invalid")
+            if self.minimum is not None and value < self.minimum:
+                raise TaskArgumentError(f"task_arg_{name}_invalid")
+            if self.maximum is not None and value > self.maximum:
+                raise TaskArgumentError(f"task_arg_{name}_invalid")
+        if self.enum is not None and value not in self.enum:
+            raise TaskArgumentError(f"task_arg_{name}_invalid")
+
+
+@dataclass(frozen=True)
+class TaskDefinition:
+    task_type: str
+    title: str
+    description: str
+    platforms: tuple[str, ...]
+    risk: str
+    destructive: bool
+    args_schema: Mapping[str, ArgumentSpec] = field(default_factory=dict)
+    requires_explicit_dispatch: bool = False
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "TaskDefinition":
+        return cls(
+            task_type=str(data["task_type"]),
+            title=str(data["title"]),
+            description=str(data["description"]),
+            platforms=tuple(data.get("platforms", ())),
+            risk=str(data.get("risk", "low")),
+            destructive=bool(data.get("destructive", False)),
+            requires_explicit_dispatch=bool(data.get("requires_explicit_dispatch", False)),
+            args_schema={name: ArgumentSpec.from_dict(spec) for name, spec in (data.get("args_schema") or {}).items()},
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "task_type": self.task_type,
+            "title": self.title,
+            "description": self.description,
+            "platforms": list(self.platforms),
+            "risk": self.risk,
+            "destructive": self.destructive,
+            "args_schema": {name: spec.as_dict() for name, spec in self.args_schema.items()},
+        }
+        if self.requires_explicit_dispatch:
+            out["requires_explicit_dispatch"] = True
+        return out
+
+    def validate_args(self, args: Mapping[str, Any] | None) -> None:
+        args = args or {}
+        for name in args:
+            if name not in self.args_schema:
+                raise TaskArgumentError(f"task_arg_{name}_unknown")
+        for name, spec in self.args_schema.items():
+            if spec.required and (name not in args or args.get(name) in (None, "")):
+                raise TaskArgumentError(f"task_arg_{name}_required")
+            if name in args:
+                spec.validate(name, args[name])
+
+
+_TASK_CATALOG_SOURCE = [
     {
         "task_type": "inventory",
         "title": "Host inventory",
@@ -212,6 +315,14 @@ READONLY_TASK_CATALOG: List[Dict[str, Any]] = [
     },
 ]
 
+TASK_CATALOG: tuple[TaskDefinition, ...] = tuple(TaskDefinition.from_dict(item) for item in _TASK_CATALOG_SOURCE)
+TASK_CATALOG_BY_TYPE: dict[str, TaskDefinition] = {item.task_type: item for item in TASK_CATALOG}
+READONLY_TASK_CATALOG: list[dict[str, Any]] = [item.as_dict() for item in TASK_CATALOG]
+
+
+def get_task_definition(task_type: str) -> TaskDefinition | None:
+    return TASK_CATALOG_BY_TYPE.get(task_type)
+
 
 def validate_task_args(task_type: str, args: Dict[str, Any]) -> None:
     """Validate analyst-supplied task args against the endpoint task catalog.
@@ -219,31 +330,7 @@ def validate_task_args(task_type: str, args: Dict[str, Any]) -> None:
     This intentionally supports only the tiny schema vocabulary V1 uses today.
     The server must reject unsafe/unknown task shapes before work reaches endpoints.
     """
-    entry = next((item for item in READONLY_TASK_CATALOG if item["task_type"] == task_type), None)
+    entry = get_task_definition(task_type)
     if not entry:
         raise TaskArgumentError("task_not_allowlisted")
-    schema = entry.get("args_schema") or {}
-    args = args or {}
-    for name in args:
-        if name not in schema:
-            raise TaskArgumentError(f"task_arg_{name}_unknown")
-    for name, spec in schema.items():
-        if spec.get("required") and (name not in args or args.get(name) in (None, "")):
-            raise TaskArgumentError(f"task_arg_{name}_required")
-        if name not in args:
-            continue
-        value = args[name]
-        if spec.get("type") == "string" and not isinstance(value, str):
-            raise TaskArgumentError(f"task_arg_{name}_invalid")
-        if spec.get("type") == "boolean":
-            if not isinstance(value, bool):
-                raise TaskArgumentError(f"task_arg_{name}_invalid")
-        if spec.get("type") == "integer":
-            if not isinstance(value, int) or isinstance(value, bool):
-                raise TaskArgumentError(f"task_arg_{name}_invalid")
-            if "minimum" in spec and value < spec["minimum"]:
-                raise TaskArgumentError(f"task_arg_{name}_invalid")
-            if "maximum" in spec and value > spec["maximum"]:
-                raise TaskArgumentError(f"task_arg_{name}_invalid")
-        if "enum" in spec and value not in spec["enum"]:
-            raise TaskArgumentError(f"task_arg_{name}_invalid")
+    entry.validate_args(args)

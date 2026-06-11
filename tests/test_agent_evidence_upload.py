@@ -8,12 +8,15 @@ from open_edr_mdr_agent.api.app import create_app
 ADMIN = {"Authorization": "Bearer dev-admin-token"}
 
 
-def test_agent_evidence_upload_is_raw_evidence_and_hash_searchable(tmp_path):
-    client = TestClient(create_app(tmp_path / "evidence-upload.sqlite3", create_dev_token=True))
+def _enrolled_client(tmp_path, db_name="evidence-upload.sqlite3"):
+    client = TestClient(create_app(tmp_path / db_name, create_dev_token=True))
     enroll = client.post("/api/v1/enroll", json={"enrollment_token": "dev-token", "host": "EVD01", "os": "Windows", "agent_version": "dev"})
     assert enroll.status_code == 200
-    agent_id = enroll.json()["agent_id"]
-    token = enroll.json()["agent_token"]
+    return client, enroll.json()["agent_id"], enroll.json()["agent_token"]
+
+
+def test_agent_evidence_upload_is_raw_evidence_and_hash_searchable(tmp_path):
+    client, agent_id, token = _enrolled_client(tmp_path)
     data = b"hello evidence"
     sha = hashlib.sha256(data).hexdigest()
 
@@ -34,3 +37,14 @@ def test_agent_evidence_upload_is_raw_evidence_and_hash_searchable(tmp_path):
     by_hash = client.get(f"/api/v1/admin/raw-evidence/by-hash/{sha}", headers=ADMIN, params={"tenant_id": "default"})
     assert by_hash.status_code == 200
     assert by_hash.json()["raw_ref"] == raw_ref
+
+
+def test_agent_evidence_upload_rejects_mismatched_hash(tmp_path):
+    client, agent_id, token = _enrolled_client(tmp_path, "evidence-upload-bad-hash.sqlite3")
+    upload = client.post(
+        f"/api/v1/agents/{agent_id}/evidence",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"kind": "file", "path": "C:/Temp/evidence.txt", "sha256": "0" * 64, "size": 5, "content_base64": base64.b64encode(b"hello").decode(), "metadata": {}},
+    )
+    assert upload.status_code == 400
+    assert upload.json()["detail"] == "evidence_sha256_mismatch"

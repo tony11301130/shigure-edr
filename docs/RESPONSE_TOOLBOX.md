@@ -108,6 +108,8 @@ On Windows, the agent now uses fixed native commands for common inventory tasks:
 - `sc.exe query state= all`
 - `schtasks.exe /query /fo csv /v`
 
+`process_list`, `network_connections`, and `listening_ports` preserve the raw command output and also expose parsed `rows` for downstream UI, reporting, and investigation workflows.
+
 The agent does not expose arbitrary shell execution through these tasks.
 
 ## V2 investigation and evidence tasks
@@ -127,6 +129,8 @@ Evidence upload endpoint used by the agent:
 POST /api/v1/agents/{agent_id}/evidence
 ```
 
+The server-side evidence module validates uploaded file evidence before storage: base64 must decode, declared size must match decoded bytes, and declared SHA-256 must match the decoded content. Raw evidence reference generation is centralized so events, alerts, task results, and agent uploads use one storage seam.
+
 Admin evidence lookup:
 
 ```text
@@ -145,3 +149,9 @@ POST /api/v1/admin/tasks/expire-stale
 Agent heartbeat now reports health metadata including pid, version, runtime OS/arch, spool path/size, and task capability count.
 
 Every telemetry cycle includes one `endpoint_state` internal event so endpoint presence is searchable in the event store even when optional process/network/log collectors are disabled.
+
+## Architecture notes
+
+- Agent task execution is split by locality: dispatch/catalog, file/evidence tasks, process tasks, network tasks, system/persistence tasks, response tasks, command helpers, and Windows parsers.
+- Server task catalog metadata is represented as typed task definitions while preserving the public `READONLY_TASK_CATALOG` JSON shape.
+- Evidence validation/reference generation is centralized in `open_edr_mdr_agent.api.evidence` instead of being embedded directly in store methods.

@@ -12,6 +12,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from open_edr_mdr_agent.api.cases import CaseCreateRequest, CaseEvidenceRecord, CaseEvidenceRequest, CaseRecord, CaseUpdateRequest
+from open_edr_mdr_agent.api.evidence import EvidenceError
 from open_edr_mdr_agent.api.hunts import HuntCreateRequest, HuntRecord, HuntRunRecord, HuntUpdateRequest
 from open_edr_mdr_agent.api.models import (
     AgentConfig,
@@ -120,7 +121,10 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
     def upload_agent_evidence(agent=Depends(_agent_auth), req: EvidenceUploadRequest = None):
         if req is None:
             raise HTTPException(status_code=400, detail="empty_evidence_upload")
-        return store.store_agent_evidence(agent["tenant_id"], agent["agent_id"], req)
+        try:
+            return store.store_agent_evidence(agent["tenant_id"], agent["agent_id"], req)
+        except EvidenceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/api/v1/admin/task-catalog")
     def list_task_catalog(_admin=Depends(_admin_auth)):

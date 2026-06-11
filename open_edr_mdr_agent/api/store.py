@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import secrets
 import sqlite3
@@ -12,6 +11,7 @@ from uuid import uuid4
 
 from open_edr_mdr_agent.api.cases import CaseEvidenceRecord, CaseRecord
 from open_edr_mdr_agent.api.hunts import HuntRecord, HuntRunRecord
+from open_edr_mdr_agent.api.evidence import build_agent_evidence, build_raw_evidence
 from open_edr_mdr_agent.api.models import AgentConfig, AgentRecord, EvidenceUploadRequest, TaskRecord
 from open_edr_mdr_agent.core.schemas import Alert, NormalizedEvent
 
@@ -274,10 +274,10 @@ class SQLiteStore:
         now_dt = datetime.now(timezone.utc)
         for event in events:
             event.ingested_at = event.ingested_at or now_dt
-            raw_ref, raw_hash, payload = self._raw_evidence_values(event.tenant_id, "event", event.id, event.raw)
-            event.raw_ref = event.raw_ref or raw_ref
-            event.raw_hash = event.raw_hash or raw_hash
-            raw_rows.append((event.raw_ref, event.tenant_id, "event", event.raw_hash, payload, utc_now()))
+            raw = build_raw_evidence(event.tenant_id, "event", event.id, event.raw)
+            event.raw_ref = event.raw_ref or raw.raw_ref
+            event.raw_hash = event.raw_hash or raw.sha256
+            raw_rows.append((event.raw_ref, event.tenant_id, "event", event.raw_hash, raw.payload_json, utc_now()))
             rows.append((event.id, event.tenant_id, agent_id, event.host, event.event_type.value, event.source.value, event.timestamp.isoformat(), event.process_name, event.process_id, event.command_line, event.user, event.hash_sha256, event.remote_ip, event.domain, event.raw_ref, event.raw_hash, event.model_dump_json()))
         with self.connect() as conn:
             conn.executemany(
@@ -297,10 +297,10 @@ class SQLiteStore:
         for alert in alerts:
             tenant_id = str((alert.raw or {}).get("tenant_id") or "default")
             alert.created_at = alert.created_at or now_dt
-            raw_ref, raw_hash, payload = self._raw_evidence_values(tenant_id, "alert", alert.alert_id, alert.raw)
-            alert.raw_ref = alert.raw_ref or raw_ref
-            alert.raw_hash = alert.raw_hash or raw_hash
-            raw_rows.append((alert.raw_ref, tenant_id, "alert", alert.raw_hash, payload, utc_now()))
+            raw = build_raw_evidence(tenant_id, "alert", alert.alert_id, alert.raw)
+            alert.raw_ref = alert.raw_ref or raw.raw_ref
+            alert.raw_hash = alert.raw_hash or raw.sha256
+            raw_rows.append((alert.raw_ref, tenant_id, "alert", alert.raw_hash, raw.payload_json, utc_now()))
             rows.append((alert.alert_id, tenant_id, alert.title, alert.severity.value, alert.timestamp.isoformat(), alert.host, alert.user, alert.process_name, alert.raw_ref, alert.raw_hash, alert.model_dump_json()))
         with self.connect() as conn:
             conn.executemany(
@@ -340,36 +340,25 @@ class SQLiteStore:
 
     def complete_task(self, tenant_id: str, agent_id: str, task_id: str, status: str, result: Dict[str, Any], error: Optional[str]) -> None:
         raw_payload = {"task_id": task_id, "agent_id": agent_id, "status": status, "result": result, "error": error}
-        raw_ref, raw_hash, payload_json = self._raw_evidence_values(tenant_id, "task_result", task_id, raw_payload)
+        raw = build_raw_evidence(tenant_id, "task_result", task_id, raw_payload)
         with self.connect() as conn:
             conn.execute(
                 "insert or ignore into raw_evidence(raw_ref, tenant_id, kind, sha256, payload_json, created_at) values (?, ?, ?, ?, ?, ?)",
-                (raw_ref, tenant_id, "task_result", raw_hash, payload_json, utc_now()),
+                (raw.raw_ref, raw.tenant_id, raw.kind, raw.sha256, raw.payload_json, utc_now()),
             )
             conn.execute(
                 "update tasks set status=?, completed_at=?, result_json=?, error=?, raw_ref=?, raw_hash=? where tenant_id=? and agent_id=? and task_id=?",
-                (status, utc_now(), json.dumps(result), error, raw_ref, raw_hash, tenant_id, agent_id, task_id),
+                (status, utc_now(), json.dumps(result), error, raw.raw_ref, raw.sha256, tenant_id, agent_id, task_id),
             )
 
     def store_agent_evidence(self, tenant_id: str, agent_id: str, req: EvidenceUploadRequest) -> Dict[str, Any]:
-        file_sha = req.sha256.lower()
-        payload = {
-            "agent_id": agent_id,
-            "kind": req.kind,
-            "path": req.path,
-            "sha256": file_sha,
-            "size": req.size,
-            "content_base64": req.content_base64,
-            "metadata": req.metadata,
-        }
-        object_id = f"{agent_id}:{req.kind}:{req.path or file_sha}:{file_sha[:16]}"
-        raw_ref, _payload_hash, payload_json = self._raw_evidence_values(tenant_id, f"agent_{req.kind}", object_id, payload)
+        raw = build_agent_evidence(tenant_id, agent_id, req)
         with self.connect() as conn:
             conn.execute(
                 "insert or ignore into raw_evidence(raw_ref, tenant_id, kind, sha256, payload_json, created_at) values (?, ?, ?, ?, ?, ?)",
-                (raw_ref, tenant_id, f"agent_{req.kind}", file_sha, payload_json, utc_now()),
+                (raw.raw_ref, raw.tenant_id, raw.kind, raw.sha256, raw.payload_json, utc_now()),
             )
-        return {"raw_ref": raw_ref, "sha256": file_sha, "size": req.size}
+        return {"raw_ref": raw.raw_ref, "sha256": raw.sha256, "size": req.size}
 
     def expire_stale_tasks(self, tenant_id: str) -> int:
         now = datetime.now(timezone.utc)
@@ -810,13 +799,6 @@ class SQLiteStore:
             evidence_id=row["evidence_id"], case_id=row["case_id"], tenant_id=row["tenant_id"], evidence_type=row["evidence_type"], ref_id=row["ref_id"],
             summary=row.get("summary"), data=json.loads(row["data_json"] or "{}"), created_at=datetime.fromisoformat(row["created_at"]),
         )
-
-    def _raw_evidence_values(self, tenant_id: str, kind: str, object_id: str, payload: Dict[str, Any]) -> tuple[str, str, str]:
-        payload_json = json.dumps(payload or {}, sort_keys=True, separators=(",", ":"), default=str)
-        raw_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
-        safe_object_id = str(object_id).replace("/", "_").replace(":", "_")
-        raw_ref = f"sqlite://raw_evidence/{tenant_id}/{kind}/{safe_object_id}/{raw_hash[:16]}"
-        return raw_ref, raw_hash, payload_json
 
     def _task_record(self, row: Dict[str, Any]) -> TaskRecord:
         return TaskRecord(
