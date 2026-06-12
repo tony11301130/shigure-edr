@@ -80,10 +80,10 @@ def test_minimal_ui_contains_endpoint_task_and_download_controls(tmp_path):
     res = client.get("/ui")
     assert res.status_code == 200
     text = res.text
-    assert "Reporting Endpoints" in text
-    assert "Reverse-Proxy Job Dispatch" in text
-    assert "DOWNLOAD DEPLOYMENT ZIP" in text
-    assert "DOWNLOAD CONFIG" in text
+    assert "Investigation queue" in text
+    assert "Recommended next steps" in text
+    assert "Deploy Shiori Agent" in text
+    assert "Related" in text and "Host day" in text
     assert "/api/v1/admin/tasks" in text
     assert "/api/v1/admin/downloads/agent/package" in text
     assert "/api/v1/admin/downloads/agent-config" in text
