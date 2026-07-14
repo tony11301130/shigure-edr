@@ -15,16 +15,15 @@ cd "$ROOT"
 if [[ ! -x .venv/bin/python ]]; then
   python3 -m venv .venv
 fi
-. .venv/bin/activate
-pip install -e . >/tmp/open-edr-mdr-smoke-pip.log
+.venv/bin/python -m pip install -e . >/tmp/open-edr-mdr-smoke-pip.log
 
 (cd agent && go build -o "$AGENT_BIN" ./cmd/open-edr-agent)
 
-OPEN_EDR_MDR_DB="$DB" uvicorn open_edr_mdr_agent.api.app:app --host 127.0.0.1 --port "$PORT" >"$LOG" 2>&1 &
+OPEN_EDR_MDR_DB="$DB" OPEN_EDR_MDR_PROFILE=dev .venv/bin/python -m uvicorn open_edr_mdr_agent.api.app:app --host 127.0.0.1 --port "$PORT" >"$LOG" 2>&1 &
 SERVER_PID=$!
 trap 'kill "$SERVER_PID" >/dev/null 2>&1 || true' EXIT
 
-python - <<PY
+.venv/bin/python - <<PY
 import time, urllib.request
 url='http://127.0.0.1:${PORT}/health'
 for _ in range(50):
@@ -37,9 +36,9 @@ else:
     raise SystemExit('server did not become healthy')
 PY
 
-"$AGENT_BIN" --server "http://127.0.0.1:${PORT}" --state "$STATE" --spool "$SPOOL" --enroll-token dev-token --once --demo-suspicious-event --max-snapshot-events 5
+"$AGENT_BIN" --profile dev --server "http://127.0.0.1:${PORT}" --state "$STATE" --spool "$SPOOL" --enroll-token dev-token --once --demo-suspicious-event --max-snapshot-events 5
 
-python - <<PY
+.venv/bin/python - <<PY
 import json, urllib.request
 state=json.load(open('$STATE'))
 body=json.dumps({'tenant_id':'default','agent_id':state['agent_id'],'task_type':'file_exists','args':{'path':'$STATE'}}).encode()
@@ -47,9 +46,9 @@ req=urllib.request.Request('http://127.0.0.1:${PORT}/api/v1/admin/tasks', data=b
 print(urllib.request.urlopen(req).read().decode())
 PY
 
-"$AGENT_BIN" --server "http://127.0.0.1:${PORT}" --state "$STATE" --spool "$SPOOL" --once --max-snapshot-events 5
+"$AGENT_BIN" --profile dev --server "http://127.0.0.1:${PORT}" --state "$STATE" --spool "$SPOOL" --once --max-snapshot-events 5
 
-python - <<PY
+.venv/bin/python - <<PY
 import json, sqlite3
 conn=sqlite3.connect('$DB'); conn.row_factory=sqlite3.Row
 alerts=conn.execute('select title from alerts order by timestamp desc').fetchall()

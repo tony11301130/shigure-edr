@@ -5,9 +5,11 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"open-edr-mdr-agent/agent/internal/agentapi"
@@ -20,8 +22,10 @@ import (
 const version = "0.1.0-dev"
 
 type agentOptions struct {
+	Profile           string
 	Server            string
 	EnrollToken       string
+	ServerTrust       string
 	StatePath         string
 	SpoolPath         string
 	Once              bool
@@ -32,8 +36,10 @@ type agentOptions struct {
 }
 
 func main() {
+	profile := flag.String("profile", "", "runtime profile: dev, demo, or production")
 	server := flag.String("server", "http://127.0.0.1:8000", "backend server URL")
 	enrollToken := flag.String("enroll-token", "dev-token", "tenant enrollment token")
+	serverTrust := flag.String("server-trust", "", "server trust mode or CA bundle path for production profile")
 	statePath := flag.String("state", defaultStatePath(), "agent state path")
 	spoolPath := flag.String("spool", defaultSpoolPath(), "offline spool JSONL path")
 	once := flag.Bool("once", false, "run one heartbeat/telemetry/task cycle then exit")
@@ -48,10 +54,13 @@ func main() {
 	installDir := flag.String("install-dir", defaultInstallDir(), "Windows service binary install directory")
 	flag.Parse()
 
-	opts := agentOptions{Server: *server, EnrollToken: *enrollToken, StatePath: *statePath, SpoolPath: *spoolPath, Once: *once, DemoEvent: *demoEvent, CollectSnapshot: *collectSnapshot, MaxSnapshotEvents: *maxSnapshotEvents, Interval: *interval}
+	opts := agentOptions{Profile: *profile, Server: *server, EnrollToken: *enrollToken, ServerTrust: *serverTrust, StatePath: *statePath, SpoolPath: *spoolPath, Once: *once, DemoEvent: *demoEvent, CollectSnapshot: *collectSnapshot, MaxSnapshotEvents: *maxSnapshotEvents, Interval: *interval}
+	if err := validateAgentOptions(opts); err != nil {
+		log.Fatalf("invalid configuration: %v", err)
+	}
 
 	if *installSvc {
-		if err := installService(*serviceName, *serviceDisplayName, *server, *enrollToken, *statePath, *spoolPath, *installDir); err != nil {
+		if err := installService(*serviceName, *serviceDisplayName, opts, *installDir); err != nil {
 			log.Fatalf("install service failed: %v", err)
 		}
 		log.Printf("service installed: %s", *serviceName)
@@ -76,8 +85,41 @@ func main() {
 	}
 }
 
+func validateAgentOptions(opts agentOptions) error {
+	profile := strings.ToLower(strings.TrimSpace(opts.Profile))
+	switch profile {
+	case "":
+		return fmt.Errorf("profile is required; choose dev, demo, or production")
+	case "dev", "demo":
+		return nil
+	case "production":
+	default:
+		return fmt.Errorf("unknown profile %q", opts.Profile)
+	}
+
+	parsed, err := url.Parse(opts.Server)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("server URL is invalid")
+	}
+	if parsed.Scheme != "https" {
+		return fmt.Errorf("production requires https server URL")
+	}
+	token := strings.ToLower(strings.TrimSpace(opts.EnrollToken))
+	switch token {
+	case "", "dev-token", "enroll-token", "changeme", "change-me":
+		return fmt.Errorf("production enrollment token must not use a default or dev value")
+	}
+	if strings.TrimSpace(opts.ServerTrust) == "" {
+		return fmt.Errorf("production requires server trust configuration")
+	}
+	return nil
+}
+
 func runAgent(opts agentOptions, stop <-chan struct{}) error {
-	client := agentapi.New(opts.Server)
+	client, err := agentapi.NewWithTrust(opts.Server, opts.ServerTrust)
+	if err != nil {
+		return fmt.Errorf("configure server trust: %w", err)
+	}
 	agentState, err := state.Load(opts.StatePath)
 	if err != nil {
 		log.Printf("state not found, enrolling: %v", err)

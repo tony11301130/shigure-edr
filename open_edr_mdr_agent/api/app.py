@@ -7,6 +7,7 @@ import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Optional
+from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -32,7 +33,7 @@ from open_edr_mdr_agent.api.models import (
     EvidenceUploadResponse,
 )
 from open_edr_mdr_agent.api.store import SQLiteStore
-from open_edr_mdr_agent.api.task_catalog import READONLY_TASK_CATALOG, TaskArgumentError, validate_task_args
+from open_edr_mdr_agent.api.task_catalog import READONLY_TASK_CATALOG, TaskArgumentError, catalog_for_response_mode, get_task_definition, validate_task_args
 from open_edr_mdr_agent.core.detection import detect_many
 from open_edr_mdr_agent.core.rules import load_rules
 from open_edr_mdr_agent.core.schemas import Alert, NormalizedEvent, Severity, Source
@@ -40,14 +41,34 @@ from open_edr_mdr_agent.core.schemas import Alert, NormalizedEvent, Severity, So
 DEFAULT_DB = os.environ.get("OPEN_EDR_MDR_DB", "/tmp/open-edr-mdr-agent.sqlite3")
 DEFAULT_DEV_TOKEN = os.environ.get("OPEN_EDR_MDR_DEV_ENROLLMENT_TOKEN", "dev-token")
 DEFAULT_ADMIN_TOKEN = os.environ.get("OPEN_EDR_MDR_ADMIN_TOKEN", "dev-admin-token")
+DEFAULT_PROFILE = os.environ.get("OPEN_EDR_MDR_PROFILE")
+DEFAULT_SERVER_TRUST = os.environ.get("OPEN_EDR_MDR_SERVER_TRUST")
+
+PROFILES = {"dev", "demo", "production"}
+DEV_ADMIN_TOKENS = {"", "dev-admin-token", "admin", "changeme", "change-me"}
+DEV_ENROLLMENT_TOKENS = {"", "dev-token", "enroll-token", "changeme", "change-me"}
 
 
-def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = True) -> FastAPI:
+def create_app(
+    db_path: str | Path = DEFAULT_DB,
+    *,
+    create_dev_token: bool | None = None,
+    profile: str | None = None,
+    admin_token: str | None = None,
+    enrollment_token: str | None = None,
+    server_trust: str | None = None,
+) -> FastAPI:
+    runtime = _runtime_config(profile=profile, admin_token=admin_token, enrollment_token=enrollment_token, server_trust=server_trust)
     app = FastAPI(title="Shiori API", version="0.1.0")
     store = SQLiteStore(db_path)
     app.state.custom_rules = load_rules(os.environ.get("OPEN_EDR_MDR_RULES"))
+    app.state.runtime_config = runtime
+    if create_dev_token is None:
+        create_dev_token = runtime["profile"] != "production"
     if create_dev_token:
-        store.create_enrollment_token("default", token=DEFAULT_DEV_TOKEN, max_uses=None)
+        if runtime["profile"] == "production":
+            raise ValueError("production_create_dev_token_disabled")
+        store.create_enrollment_token("default", token=runtime["enrollment_token"], max_uses=None)
     app.state.store = store
 
     @app.get("/health")
@@ -128,18 +149,19 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
 
     @app.get("/api/v1/admin/task-catalog")
     def list_task_catalog(_admin=Depends(_admin_auth)):
-        return {"tasks": READONLY_TASK_CATALOG}
+        return {"tasks": _task_catalog_for_runtime(app)}
 
     @app.get("/api/v1/admin/readonly-scripts")
     def list_readonly_scripts(_admin=Depends(_admin_auth)):
         # Backward-compatible alias for older UI/tests. The catalog now includes
         # both read-only collection tasks and explicitly dispatched response tools.
-        return {"scripts": READONLY_TASK_CATALOG}
+        return {"scripts": _task_catalog_for_runtime(app)}
 
     @app.post("/api/v1/admin/tasks", response_model=TaskRecord)
     def create_task(req: TaskCreateRequest, _admin=Depends(_admin_auth)):
         try:
             validate_task_args(req.task_type, req.args)
+            _validate_task_policy(app, req.task_type)
             task_id = store.create_task(req.tenant_id, req.agent_id, req.task_type, req.args, req.timeout_seconds)
         except TaskArgumentError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -422,16 +444,21 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
         return FileResponse(path, media_type="application/vnd.microsoft.portable-executable", filename="shiori-agent.exe")
 
     def _deployment_config(tenant_id: str, server_url: str, enrollment_token: str) -> dict:
+        runtime = app.state.runtime_config
+        server_trust = runtime.get("server_trust", "")
+        trust_arg = f" --server-trust {server_trust}" if server_trust else ""
         return {
             "tenant_id": tenant_id,
+            "profile": runtime["profile"],
             "server_url": server_url,
+            "server_trust": server_trust,
             "enrollment_token": enrollment_token,
             "agent_filename": "shiori-agent.exe",
             "install_dir": "C:\\Program Files\\Shiori",
             "data_dir": "C:\\ProgramData\\Shiori",
             "identity_file": "C:\\ProgramData\\Shiori\\shiori-agent-state.json",
             "spool_file": "C:\\ProgramData\\Shiori\\spool.jsonl",
-            "install_command": f".\\shiori-agent.exe --install-service --server {server_url} --enroll-token {enrollment_token}",
+            "install_command": f".\\shiori-agent.exe --install-service --profile {runtime['profile']} --server {server_url} --enroll-token {enrollment_token}{trust_arg}",
             "package_install_command": ".\\install.ps1",
             "start_command": "sc.exe start ShioriAgent",
             "enrollment_model": {
@@ -443,12 +470,14 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
                 "Run install.ps1 from an elevated PowerShell prompt on the Windows endpoint.",
                 "Endpoint traffic is outbound-only; server queues jobs and agent polls /tasks/claim.",
                 "The installer copies the service binary to C:\\Program Files\\Shiori and stores endpoint state/spool files under C:\\ProgramData\\Shiori.",
+                "Shiori binary, service, and path names are current compatibility names during the planned Shigure naming migration.",
                 "Protect this package because it contains an enrollment token. The token should be short-lived or limited-use in production.",
             ],
         }
 
     @app.get("/api/v1/admin/downloads/agent-config")
     def download_agent_config(tenant_id: str = "default", server_url: str = "http://127.0.0.1:8765", max_uses: Optional[int] = None, _admin=Depends(_admin_auth)):
+        _validate_deployment_server_url(app, server_url)
         token = store.create_enrollment_token(tenant_id, max_uses=max_uses)
         config = _deployment_config(tenant_id, server_url, token)
         return JSONResponse(config, headers={"Content-Disposition": "attachment; filename=shiori-agent-config.json"})
@@ -458,6 +487,7 @@ def create_app(db_path: str | Path = DEFAULT_DB, *, create_dev_token: bool = Tru
         agent_path = Path(os.environ.get("SHIORI_WINDOWS_AGENT_EXE") or os.environ.get("OPEN_EDR_MDR_WINDOWS_AGENT_EXE", "/tmp/shiori-agent.exe"))
         if not agent_path.exists() or not agent_path.is_file():
             raise HTTPException(status_code=404, detail="windows_agent_binary_not_found")
+        _validate_deployment_server_url(app, server_url)
         token = store.create_enrollment_token(tenant_id, max_uses=max_uses)
         config = _deployment_config(tenant_id, server_url, token)
         install_ps1 = r"""$ErrorActionPreference = "Stop"
@@ -471,10 +501,15 @@ if (!$Config.server_url) { throw "server_url missing from config" }
 if (!$Config.enrollment_token) { throw "enrollment_token missing from config" }
 $InstallDir = $Config.install_dir
 $DataDir = $Config.data_dir
+$Profile = $Config.profile
+$ServerTrust = $Config.server_trust
 if (!$InstallDir) { $InstallDir = "C:\Program Files\Shiori" }
 if (!$DataDir) { $DataDir = "C:\ProgramData\Shiori" }
+if (!$Profile) { $Profile = "dev" }
 Write-Host "Installing Shiori Agent for $($Config.server_url)"
-& $Agent --install-service --server $Config.server_url --enroll-token $Config.enrollment_token --install-dir $InstallDir --state (Join-Path $DataDir "shiori-agent-state.json") --spool (Join-Path $DataDir "spool.jsonl")
+$Args = @("--install-service", "--profile", $Profile, "--server", $Config.server_url, "--enroll-token", $Config.enrollment_token, "--install-dir", $InstallDir, "--state", (Join-Path $DataDir "shiori-agent-state.json"), "--spool", (Join-Path $DataDir "spool.jsonl"))
+if ($ServerTrust) { $Args += @("--server-trust", $ServerTrust) }
+& $Agent @Args
 sc.exe start ShioriAgent
 Write-Host "Installed. Service binary: $(Join-Path $InstallDir 'shiori-agent.exe')"
 Write-Host "Endpoint state: $(Join-Path $DataDir 'shiori-agent-state.json')"
@@ -540,8 +575,65 @@ Run from elevated PowerShell:
         inserted = store.insert_alerts(alerts)
         return {"stale_agents": len(alerts), "agents_marked_offline": marked_offline, "alerts_generated": inserted}
 
+    app.dependency_overrides[_admin_auth] = _make_admin_auth(app)
     app.dependency_overrides[_agent_auth] = _make_agent_auth(app)
     return app
+
+
+def _runtime_config(*, profile: str | None, admin_token: str | None, enrollment_token: str | None, server_trust: str | None) -> dict:
+    raw_profile = profile or os.environ.get("OPEN_EDR_MDR_PROFILE") or ""
+    if not raw_profile:
+        raise ValueError("profile_required")
+    resolved_profile = raw_profile.strip().lower()
+    if resolved_profile not in PROFILES:
+        raise ValueError(f"invalid_profile:{resolved_profile}")
+
+    resolved_admin_token = admin_token if admin_token is not None else os.environ.get("OPEN_EDR_MDR_ADMIN_TOKEN", DEFAULT_ADMIN_TOKEN)
+    resolved_enrollment_token = enrollment_token if enrollment_token is not None else os.environ.get("OPEN_EDR_MDR_DEV_ENROLLMENT_TOKEN", DEFAULT_DEV_TOKEN)
+    resolved_server_trust = server_trust if server_trust is not None else os.environ.get("OPEN_EDR_MDR_SERVER_TRUST", DEFAULT_SERVER_TRUST or "")
+
+    if resolved_profile == "production":
+        if resolved_admin_token.strip().lower() in DEV_ADMIN_TOKENS:
+            raise ValueError("production_admin_token_rejected")
+        if resolved_enrollment_token.strip().lower() in DEV_ENROLLMENT_TOKENS:
+            raise ValueError("production_enrollment_token_rejected")
+        if not resolved_server_trust.strip():
+            raise ValueError("production_server_trust_required")
+
+    return {
+        "profile": resolved_profile,
+        "response_mode": "read_only" if resolved_profile == "production" else "dev",
+        "admin_token": resolved_admin_token,
+        "enrollment_token": resolved_enrollment_token,
+        "server_trust": resolved_server_trust,
+    }
+
+
+def _validate_deployment_server_url(app: FastAPI, server_url: str) -> None:
+    runtime = getattr(app.state, "runtime_config", {})
+    if runtime.get("profile") != "production":
+        return
+    parsed = urlparse(server_url)
+    if parsed.scheme != "https":
+        raise HTTPException(status_code=400, detail="production_requires_https_server_url")
+
+
+def _task_catalog_for_runtime(app: FastAPI) -> list[dict]:
+    runtime = getattr(app.state, "runtime_config", {})
+    if runtime.get("profile") == "production":
+        return catalog_for_response_mode("read_only")
+    return READONLY_TASK_CATALOG
+
+
+def _validate_task_policy(app: FastAPI, task_type: str) -> None:
+    runtime = getattr(app.state, "runtime_config", {})
+    if runtime.get("profile") != "production":
+        return
+    definition = get_task_definition(task_type)
+    if not definition:
+        return
+    if definition.destructive or definition.requires_explicit_dispatch or definition.task_type == "copy_file":
+        raise HTTPException(status_code=403, detail="blocked_by_production_task_policy")
 
 
 def _admin_auth(authorization: Annotated[Optional[str], Header()] = None, x_admin_token: Annotated[Optional[str], Header()] = None):
@@ -552,6 +644,18 @@ def _admin_auth(authorization: Annotated[Optional[str], Header()] = None, x_admi
     if supplied != expected:
         raise HTTPException(status_code=401, detail="invalid admin token")
     return {"role": "admin"}
+
+
+def _make_admin_auth(app: FastAPI):
+    def dep(authorization: Annotated[Optional[str], Header()] = None, x_admin_token: Annotated[Optional[str], Header()] = None):
+        expected = app.state.runtime_config["admin_token"]
+        supplied = x_admin_token
+        if authorization and authorization.lower().startswith("bearer "):
+            supplied = authorization.split(" ", 1)[1]
+        if supplied != expected:
+            raise HTTPException(status_code=401, detail="invalid admin token")
+        return {"role": "admin"}
+    return dep
 
 
 def _agent_auth(agent_id: str, authorization: Annotated[Optional[str], Header()] = None):
@@ -630,10 +734,9 @@ UI_HTML = r"""
 </div>
 <div class="drawer" id="deployDrawer" role="dialog" aria-modal="true" aria-labelledby="deployTitle"><div class="drawer-panel"><div class="drawer-head"><h2 id="deployTitle">Deploy Shiori Agent</h2><button class="secondary" onclick="closeDeploy()">Close</button></div><div class="form-stack"><p class="muted">Deployment is setup work, so it lives outside the investigation surface.</p><label for="serverUrl">Server URL</label><input id="serverUrl" value="http://192.168.1.93:8765"><label for="maxUses">Enrollment token max uses</label><input id="maxUses" placeholder="optional"><div class="subgrid"><button onclick="downloadPackage()">Download ZIP</button><button class="secondary" onclick="downloadConfig()">Config JSON</button></div><button class="ghost" onclick="downloadAgent()">Download agent binary</button><div id="deployStatus" class="toast"></div></div></div></div>
 <script>
-const $=id=>document.getElementById(id);let STATE={queue:'alerts',scope:'related',summary:null,agents:[],alerts:[],tasks:[],cases:[],hunts:[],evidence:[],events:[],selectedAlert:null,selectedEndpoint:null};
-const TASKS=['inventory','agent_identity','process_list','process_detail','process_tree','network_connections','listening_ports','service_list','scheduled_tasks','windows_event_logs','file_exists','file_hash','list_directory','read_file_chunk','copy_file','collect_file','registry_query','autoruns_collect','quarantine_file','delete_file','kill_process','service_control'];
+const $=id=>document.getElementById(id);let STATE={queue:'alerts',scope:'related',summary:null,agents:[],alerts:[],tasks:[],cases:[],hunts:[],evidence:[],events:[],taskCatalog:[],selectedAlert:null,selectedEndpoint:null};
 function tenant(){return encodeURIComponent($('tenant').value||'default')}function rawTenant(){return $('tenant').value||'default'}function headers(json=false){const h={'Authorization':'Bearer '+$('token').value};if(json)h['Content-Type']='application/json';return h}async function api(path,opts={}){opts.headers={...(opts.headers||{}),...headers(opts.json)};if(opts.json&&opts.body&&typeof opts.body!=='string')opts.body=JSON.stringify(opts.body);const r=await fetch(path,opts);if(!r.ok)throw new Error(path+' '+r.status+' '+await r.text());return await r.json()}function esc(v){return String(v??'').replace(/[&<>"']/g,s=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]))}function short(v,n=18){v=String(v||'');return v.length>n?v.slice(0,n)+'…':v}function clsSeverity(s){return String(s||'info').toLowerCase()}function fmtTime(v){if(!v)return '—';try{return new Date(v).toLocaleString()}catch{return v}}function empty(msg){return `<div class="empty">${esc(msg)}</div>`}function pill(k,v){return `<span class="pill"><span>${esc(k)}</span><strong>${esc(v||'—')}</strong></span>`}function setText(id,v){$(id).textContent=v}
-async function loadAll(){try{setText('liveText','refreshing…');const t=tenant();const [summary,agents,alerts,cases,tasks,hunts,evidence,events]=await Promise.all([api(`/api/v1/admin/summary?tenant_id=${t}`),api(`/api/v1/admin/agents?tenant_id=${t}`),api(`/api/v1/admin/alerts?tenant_id=${t}&limit=50`),api(`/api/v1/admin/cases?tenant_id=${t}&limit=25`),api(`/api/v1/admin/tasks?tenant_id=${t}&limit=50`),api(`/api/v1/admin/hunts?tenant_id=${t}&limit=25`),api(`/api/v1/admin/raw-evidence/list?tenant_id=${t}&limit=50`),api(`/api/v1/admin/events?tenant_id=${t}&limit=150`)]);STATE.summary=summary;STATE.agents=agents.agents||[];STATE.alerts=alerts.alerts||alerts||[];STATE.cases=cases.cases||cases||[];STATE.tasks=tasks.tasks||tasks||[];STATE.hunts=hunts.hunts||hunts||[];STATE.evidence=evidence.evidence||evidence||[];STATE.events=events.events||events||[];if(!STATE.selectedAlert&&STATE.alerts[0])selectAlert(STATE.alerts[0].alert_id,false);renderAll();setText('liveText','updated '+new Date().toLocaleTimeString())}catch(e){setText('liveText','load failed');$('queueBody').innerHTML=empty(e.message)}}
+async function loadAll(){try{setText('liveText','refreshing…');const t=tenant();const [summary,agents,alerts,cases,tasks,hunts,evidence,events,catalog]=await Promise.all([api(`/api/v1/admin/summary?tenant_id=${t}`),api(`/api/v1/admin/agents?tenant_id=${t}`),api(`/api/v1/admin/alerts?tenant_id=${t}&limit=50`),api(`/api/v1/admin/cases?tenant_id=${t}&limit=25`),api(`/api/v1/admin/tasks?tenant_id=${t}&limit=50`),api(`/api/v1/admin/hunts?tenant_id=${t}&limit=25`),api(`/api/v1/admin/raw-evidence/list?tenant_id=${t}&limit=50`),api(`/api/v1/admin/events?tenant_id=${t}&limit=150`),api('/api/v1/admin/task-catalog')]);STATE.summary=summary;STATE.agents=agents.agents||[];STATE.alerts=alerts.alerts||alerts||[];STATE.cases=cases.cases||cases||[];STATE.tasks=tasks.tasks||tasks||[];STATE.hunts=hunts.hunts||hunts||[];STATE.evidence=evidence.evidence||evidence||[];STATE.events=events.events||events||[];STATE.taskCatalog=catalog.tasks||[];if(!STATE.selectedAlert&&STATE.alerts[0])selectAlert(STATE.alerts[0].alert_id,false);renderAll();setText('liveText','updated '+new Date().toLocaleTimeString())}catch(e){setText('liveText','load failed');$('queueBody').innerHTML=empty(e.message)}}
 function renderAll(){renderStatus();renderTaskSelectors();renderQueue();renderWorkspace();renderContext()}function renderStatus(){const c=(STATE.summary&&STATE.summary.counts)||{};$('statusStrip').innerHTML=[['alerts','Alerts'],['agents','Endpoints'],['tasks','Tasks'],['cases','Cases']].map(([k,l])=>`<span class="stat"><b>${esc(c[k]??0)}</b><span>${l}</span></span>`).join('')}
 function switchQueue(q){STATE.queue=q;$('tabAlerts').classList.toggle('active',q==='alerts');$('tabEndpoints').classList.toggle('active',q==='endpoints');renderQueue()}function renderQueue(){if(STATE.queue==='endpoints')return renderEndpointQueue();const rows=STATE.alerts;if(!rows.length){$('queueBody').innerHTML=empty('No alerts yet. Shiori will populate this queue when detection rules match endpoint telemetry.');return}$('queueBody').innerHTML=rows.map(a=>{const active=STATE.selectedAlert&&STATE.selectedAlert.alert_id===a.alert_id;const sev=clsSeverity(a.severity);return `<div class="alert-row ${active?'active':''}" onclick="selectAlert('${esc(a.alert_id)}')"><div class="alert-main"><div class="sevbar ${sev}"></div><div class="titleline"><b>${esc(a.title)}</b><div class="meta"><span class="sev-${sev}">${esc(a.severity)}</span><span>${esc(a.host||'unknown host')}</span></div></div><div class="time">${esc(fmtTime(a.timestamp||a.created_at))}</div></div><div class="meta2">${esc(a.process_name||'no process')} · ${esc((a.mitre||[]).join(', ')||'no MITRE')} · ${esc(short(a.description||a.alert_id,96))}</div></div>`}).join('')}
 function renderEndpointQueue(){const rows=STATE.agents;if(!rows.length){$('queueBody').innerHTML=empty('No reporting endpoints. Use Deploy agent to enroll one.');return}$('queueBody').innerHTML=rows.map(a=>{const active=STATE.selectedEndpoint&&STATE.selectedEndpoint.agent_id===a.agent_id;return `<div class="endpoint-row ${active?'active':''}" onclick="selectEndpoint('${esc(a.agent_id)}')"><div class="titleline"><b>${esc(a.host||'unknown host')}</b><div class="meta"><span class="status-${esc(a.status)}">● ${esc(a.status)}</span><span>${esc(a.ip_address||'no ip')}</span></div><div class="meta2" style="display:block;margin-left:0">${esc(a.os||'unknown os')} · ${esc(short(a.agent_id,22))}</div></div></div>`}).join('')}
@@ -643,7 +746,7 @@ function renderWorkspace(){const a=STATE.selectedAlert,ep=STATE.selectedEndpoint
 function renderTimeline(){const a=STATE.selectedAlert,ep=STATE.selectedEndpoint;let items=[];if(a)items.push({time:a.timestamp||a.created_at,kind:'alert',title:a.title,text:a.description||a.alert_id});for(const e of relatedEvents())items.push({time:e.timestamp||e.created_at,kind:e.event_type||'event',title:e.process_name||e.event_type||'Event',text:e.command_line||e.remote_ip||e.domain||e.raw_ref||JSON.stringify(e.raw||{}).slice(0,160)});const agentId=(ep&&ep.agent_id)||(a&&findAgentByHost(a.host)||{}).agent_id;for(const t of (STATE.tasks||[]).filter(t=>!agentId||t.agent_id===agentId).slice(0,12))items.push({time:t.completed_at||t.created_at,kind:'task',title:t.task_type+' · '+t.status,text:t.error||t.raw_ref||'task result'});items.sort((x,y)=>Date.parse(y.time||0)-Date.parse(x.time||0));$('timelineCount').textContent=items.length+' timeline items';$('timeline').innerHTML=items.length?items.map(i=>`<div class="event"><div class="event-time">${esc(fmtTime(i.time))}</div><div class="event-card"><div class="event-kind">${esc(i.kind)}</div><b>${esc(i.title)}</b><p>${esc(short(i.text,220))}</p></div></div>`).join(''):empty('No related timeline data for this scope yet.')}
 function renderContext(){const a=STATE.selectedAlert,ep=STATE.selectedEndpoint;let detail=[];if(a){detail=[['Severity',a.severity],['Host',a.host],['Process',a.process_name],['MITRE',(a.mitre||[]).join(', ')],['Time',fmtTime(a.timestamp||a.created_at)],['Alert ID',a.alert_id]]}else if(ep){detail=[['Host',ep.host],['Status',ep.status],['IP',ep.ip_address],['OS',ep.os],['Version',ep.agent_version],['Agent ID',ep.agent_id]]}else detail=[['Selection','none'],['Hint','Pick an alert']];$('entityDetail').innerHTML=detail.map(([k,v])=>`<div>${esc(k)}</div><div title="${esc(v)}">${esc(v||'—')}</div>`).join('');renderRecommendedActions()}
 function currentAgent(){return STATE.selectedEndpoint||(STATE.selectedAlert&&findAgentByHost(STATE.selectedAlert.host))||STATE.agents[0]}function renderRecommendedActions(){const a=STATE.selectedAlert;let rec=[['Collect event logs','windows_event_logs',{profile:a&&String(a.title||'').toLowerCase().includes('powershell')?'powershell':'service',max_events:25}],['Inspect processes','process_list',{}],['Network snapshot','network_connections',{}],['Persistence sweep','autoruns_collect',{}]];if(!a)rec=[['Inventory','inventory',{}],['Agent identity','agent_identity',{}],['Listening ports','listening_ports',{}]];$('recommendedActions').innerHTML=rec.map(([label,type,args])=>`<div class="action-row"><div><b>${esc(label)}</b><span>${esc(type)} ${esc(JSON.stringify(args))}</span></div><button class="secondary" onclick='queueTask("${type}",${JSON.stringify(args)})'>Run</button></div>`).join('')}
-function renderTaskSelectors(){const ep=currentAgent();$('taskAgent').innerHTML=STATE.agents.map(a=>`<option value="${esc(a.agent_id)}" ${ep&&ep.agent_id===a.agent_id?'selected':''}>${esc(a.host||a.agent_id)}</option>`).join('')||'<option value="">no agent</option>';$('taskType').innerHTML=TASKS.map(t=>`<option>${t}</option>`).join('')}async function queueTask(type,args){const ep=currentAgent();if(!ep)throwStatus('No endpoint selected');$('taskStatus').innerHTML='<span class="muted">queueing…</span>';try{const body={tenant_id:rawTenant(),agent_id:ep.agent_id,task_type:type,args:args||{}};const r=await api('/api/v1/admin/tasks',{method:'POST',json:true,body});$('taskStatus').innerHTML=`<span class="ok">queued ${esc(short(r.task_id,16))}</span>`;await loadAll()}catch(e){$('taskStatus').innerHTML=`<span class="error">${esc(e.message)}</span>`}}function throwStatus(msg){$('taskStatus').innerHTML=`<span class="error">${esc(msg)}</span>`;throw new Error(msg)}async function queueCustomTask(){let args={};try{args=$('taskArgs').value?JSON.parse($('taskArgs').value):{}}catch(e){return throwStatus('Invalid JSON args')}await queueTask($('taskType').value,args)}function presetSafeTask(){$('taskType').value='windows_event_logs';$('taskArgs').value=JSON.stringify({profile:'powershell',max_events:25},null,2)}
+function renderTaskSelectors(){const ep=currentAgent();const tasks=(STATE.taskCatalog||[]).map(t=>t.task_type);$('taskAgent').innerHTML=STATE.agents.map(a=>`<option value="${esc(a.agent_id)}" ${ep&&ep.agent_id===a.agent_id?'selected':''}>${esc(a.host||a.agent_id)}</option>`).join('')||'<option value="">no agent</option>';$('taskType').innerHTML=tasks.map(t=>`<option>${esc(t)}</option>`).join('')}async function queueTask(type,args){const ep=currentAgent();if(!ep)throwStatus('No endpoint selected');$('taskStatus').innerHTML='<span class="muted">queueing…</span>';try{const body={tenant_id:rawTenant(),agent_id:ep.agent_id,task_type:type,args:args||{}};const r=await api('/api/v1/admin/tasks',{method:'POST',json:true,body});$('taskStatus').innerHTML=`<span class="ok">queued ${esc(short(r.task_id,16))}</span>`;await loadAll()}catch(e){$('taskStatus').innerHTML=`<span class="error">${esc(e.message)}</span>`}}function throwStatus(msg){$('taskStatus').innerHTML=`<span class="error">${esc(msg)}</span>`;throw new Error(msg)}async function queueCustomTask(){let args={};try{args=$('taskArgs').value?JSON.parse($('taskArgs').value):{}}catch(e){return throwStatus('Invalid JSON args')}await queueTask($('taskType').value,args)}function presetSafeTask(){$('taskType').value='windows_event_logs';$('taskArgs').value=JSON.stringify({profile:'powershell',max_events:25},null,2)}
 function openDeploy(){$('deployDrawer').classList.add('open')}function closeDeploy(){$('deployDrawer').classList.remove('open')}async function downloadBlob(path,filename,statusId){try{const r=await fetch(path,{headers:headers()});if(!r.ok)throw new Error(await r.text());const b=await r.blob();const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download=filename;a.click();URL.revokeObjectURL(u);$(statusId).innerHTML='<span class="ok">download started</span>'}catch(e){$(statusId).innerHTML='<span class="error">'+esc(e.message)+'</span>'}}function deploymentQuery(){const max=$('maxUses').value;return `tenant_id=${tenant()}&server_url=${encodeURIComponent($('serverUrl').value)}`+(max?`&max_uses=${encodeURIComponent(max)}`:'')}function downloadPackage(){downloadBlob('/api/v1/admin/downloads/agent/package?'+deploymentQuery(),'shiori-agent-package.zip','deployStatus')}function downloadAgent(){downloadBlob('/api/v1/admin/downloads/agent/windows','shiori-agent.exe','deployStatus')}function downloadConfig(){downloadBlob('/api/v1/admin/downloads/agent-config?'+deploymentQuery(),'shiori-agent-config.json','deployStatus')}
 loadAll();
 </script>

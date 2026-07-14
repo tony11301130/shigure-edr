@@ -324,6 +324,16 @@ def get_task_definition(task_type: str) -> TaskDefinition | None:
     return TASK_CATALOG_BY_TYPE.get(task_type)
 
 
+def catalog_for_response_mode(response_mode: str) -> list[dict[str, Any]]:
+    if response_mode == "read_only":
+        return [
+            item.as_dict()
+            for item in TASK_CATALOG
+            if not item.destructive and item.risk in {"low", "medium"} and item.task_type != "copy_file"
+        ]
+    return [item.as_dict() for item in TASK_CATALOG]
+
+
 def validate_task_args(task_type: str, args: Dict[str, Any]) -> None:
     """Validate analyst-supplied task args against the endpoint task catalog.
 

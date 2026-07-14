@@ -2,9 +2,12 @@ package agentapi
 
 import (
 	"bytes"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -16,6 +19,28 @@ type Client struct {
 
 func New(baseURL string) *Client {
 	return &Client{BaseURL: strings.TrimRight(baseURL, "/"), HTTP: &http.Client{Timeout: 15 * time.Second}}
+}
+
+func NewWithTrust(baseURL, serverTrust string) (*Client, error) {
+	client := New(baseURL)
+	serverTrust = strings.TrimSpace(serverTrust)
+	if serverTrust == "" || strings.EqualFold(serverTrust, "system") {
+		return client, nil
+	}
+
+	pemBytes, err := os.ReadFile(serverTrust)
+	if err != nil {
+		return nil, fmt.Errorf("read server trust bundle: %w", err)
+	}
+	roots, err := x509.SystemCertPool()
+	if err != nil || roots == nil {
+		roots = x509.NewCertPool()
+	}
+	if !roots.AppendCertsFromPEM(pemBytes) {
+		return nil, fmt.Errorf("server trust bundle has no PEM certificates")
+	}
+	client.HTTP.Transport = &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots}}
+	return client, nil
 }
 
 type EnrollmentRequest struct {

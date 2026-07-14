@@ -19,13 +19,17 @@ def provider(data_dir: str = "./sample-data") -> CompositeEndpointProvider:
 
 
 @app.command()
-def serve(host: str = "127.0.0.1", port: int = 8000, db: str = "/tmp/open-edr-mdr-agent.sqlite3"):
+def serve(host: str = "127.0.0.1", port: int = 8000, db: str = "/tmp/open-edr-mdr-agent.sqlite3", profile: Optional[str] = None):
     """Run the M0 backend API server."""
     import os
     import uvicorn
 
     os.environ["OPEN_EDR_MDR_DB"] = db
-    uvicorn.run("open_edr_mdr_agent.api.app:app", host=host, port=port, reload=False)
+    if profile:
+        os.environ["OPEN_EDR_MDR_PROFILE"] = profile
+    from open_edr_mdr_agent.api.app import create_app
+
+    uvicorn.run(create_app(db, profile=profile), host=host, port=port, reload=False)
 
 
 @app.command()

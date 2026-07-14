@@ -13,7 +13,7 @@ import (
 	"golang.org/x/sys/windows/svc"
 )
 
-func installService(serviceName, displayName, server, enrollToken, statePath, spoolPath, installDir string) error {
+func installService(serviceName, displayName string, opts agentOptions, installDir string) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return err
@@ -21,10 +21,10 @@ func installService(serviceName, displayName, server, enrollToken, statePath, sp
 	if err := os.MkdirAll(installDir, 0755); err != nil {
 		return fmt.Errorf("create install dir: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(statePath), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(opts.StatePath), 0700); err != nil {
 		return fmt.Errorf("create state dir: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(spoolPath), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(opts.SpoolPath), 0700); err != nil {
 		return fmt.Errorf("create spool dir: %w", err)
 	}
 	installedExe := filepath.Join(installDir, "shiori-agent.exe")
@@ -33,8 +33,11 @@ func installService(serviceName, displayName, server, enrollToken, statePath, sp
 			return err
 		}
 	}
-	args := []string{"--server", server, "--enroll-token", enrollToken, "--state", statePath, "--spool", spoolPath}
-	binPath := fmt.Sprintf("\"%s\" %s", installedExe, strings.Join(args, " "))
+	args := []string{"--profile", opts.Profile, "--server", opts.Server, "--enroll-token", opts.EnrollToken, "--state", opts.StatePath, "--spool", opts.SpoolPath}
+	if opts.ServerTrust != "" {
+		args = append(args, "--server-trust", opts.ServerTrust)
+	}
+	binPath := windowsServiceCommandLine(installedExe, args)
 	cmd := exec.Command("sc.exe", "create", serviceName, "binPath=", binPath, "DisplayName=", displayName, "start=", "auto")
 	out, err := cmd.CombinedOutput()
 	if err != nil {

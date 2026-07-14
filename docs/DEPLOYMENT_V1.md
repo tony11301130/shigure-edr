@@ -9,9 +9,15 @@ This runbook captures the current single-tenant intranet deployment path for the
 
 ```bash
 export OPEN_EDR_MDR_DB=/var/lib/open-edr-mdr/open-edr-mdr.sqlite3
+export OPEN_EDR_MDR_PROFILE=production
 export OPEN_EDR_MDR_ADMIN_TOKEN='<operator-admin-token>'
 export OPEN_EDR_MDR_DEV_ENROLLMENT_TOKEN='<initial-enrollment-token>'
+export OPEN_EDR_MDR_SERVER_TRUST=system
 ```
+
+Production mode rejects the built-in `dev-admin-token` / `dev-token` shortcuts and requires an explicit server trust mode. `system` means the agent should use normal operating-system certificate validation; use a CA bundle path when the deployment relies on a private intranet CA.
+
+For local smoke tests only, keep the profile as `dev` or `demo`; those profiles continue to allow HTTP and dev bootstrap credentials.
 
 3. Start the API behind an intranet reverse proxy:
 
@@ -30,10 +36,14 @@ curl http://127.0.0.1:8080/health
 
 The agent communicates outbound to the server. It enrolls once, stores local state, heartbeats for config, uploads telemetry, polls for queued read-only tasks, and uploads task results with raw evidence hashes.
 
+The current binary, service, and Windows path examples still use Shiori compatibility names until the planned Shigure runtime naming migration lands.
+
 ```powershell
 .\shiori-agent.exe `
+  --profile production `
   --server https://edr.internal.example `
   --enroll-token <initial-enrollment-token> `
+  --server-trust system `
   --state C:\ProgramData\Shiori\shiori-agent-state.json `
   --spool C:\ProgramData\Shiori\spool.jsonl
 ```
@@ -41,7 +51,7 @@ The agent communicates outbound to the server. It enrolls once, stores local sta
 Install as a Windows Service after validating the command line. The installer copies the service binary to `C:\Program Files\Shiori\shiori-agent.exe` and stores endpoint state/spool files under `C:\ProgramData\Shiori` by default:
 
 ```powershell
-.\shiori-agent.exe --install-service --server https://edr.internal.example --enroll-token <initial-enrollment-token>
+.\shiori-agent.exe --install-service --profile production --server https://edr.internal.example --enroll-token <initial-enrollment-token> --server-trust system
 Start-Service ShioriAgent
 sc.exe qc ShioriAgent
 ```
