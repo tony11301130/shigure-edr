@@ -53,6 +53,12 @@ class SQLiteStore:
                     agent_id text primary key,
                     tenant_id text not null,
                     agent_token text not null,
+                    credential_version integer not null default 1,
+                    credential_revoked_at text,
+                    credential_rotated_at text,
+                    pending_agent_token text,
+                    pending_credential_version integer,
+                    pending_credential_created_at text,
                     public_key text,
                     host text not null,
                     ip_address text,
@@ -64,6 +70,16 @@ class SQLiteStore:
                     metadata_json text not null default '{}'
                 );
                 create index if not exists idx_agents_tenant on agents(tenant_id);
+                create table if not exists agent_credential_events (
+                    event_id text primary key,
+                    tenant_id text not null,
+                    agent_id text not null,
+                    event_type text not null,
+                    credential_version integer not null,
+                    created_at text not null,
+                    metadata_json text not null default '{}'
+                );
+                create index if not exists idx_agent_credential_events_agent on agent_credential_events(tenant_id, agent_id, created_at);
                 create table if not exists raw_evidence (
                     raw_ref text primary key,
                     tenant_id text not null,
@@ -187,6 +203,12 @@ class SQLiteStore:
             self._ensure_column(conn, "alerts", "raw_hash", "text")
             self._ensure_column(conn, "tasks", "raw_ref", "text")
             self._ensure_column(conn, "tasks", "raw_hash", "text")
+            self._ensure_column(conn, "agents", "credential_version", "integer not null default 1")
+            self._ensure_column(conn, "agents", "credential_revoked_at", "text")
+            self._ensure_column(conn, "agents", "credential_rotated_at", "text")
+            self._ensure_column(conn, "agents", "pending_agent_token", "text")
+            self._ensure_column(conn, "agents", "pending_credential_version", "integer")
+            self._ensure_column(conn, "agents", "pending_credential_created_at", "text")
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, ddl_type: str) -> None:
         cols = {row["name"] for row in conn.execute(f"pragma table_info({table})").fetchall()}
@@ -252,14 +274,106 @@ class SQLiteStore:
             agent_token = secrets.token_urlsafe(32)
             conn.execute("update enrollment_tokens set uses = uses + 1 where token = ?", (enrollment_token,))
             conn.execute(
-                "insert into agents(agent_id, tenant_id, agent_token, public_key, host, ip_address, os, agent_version, status, enrolled_at, last_seen, metadata_json) values (?, ?, ?, ?, ?, ?, ?, ?, 'online', ?, ?, ?)",
+                "insert into agents(agent_id, tenant_id, agent_token, credential_version, public_key, host, ip_address, os, agent_version, status, enrolled_at, last_seen, metadata_json) values (?, ?, ?, 1, ?, ?, ?, ?, ?, 'online', ?, ?, ?)",
                 (agent_id, token["tenant_id"], agent_token, public_key, host, ip_address, os, agent_version, now, now, json.dumps(metadata)),
             )
-        return {"tenant_id": token["tenant_id"], "agent_id": agent_id, "agent_token": agent_token}
+            self._record_agent_credential_event(conn, token["tenant_id"], agent_id, "enrolled", 1, {"enrollment_token_prefix": f"{enrollment_token[:6]}..."})
+        return {"tenant_id": token["tenant_id"], "agent_id": agent_id, "agent_token": agent_token, "credential_version": 1}
 
     def authenticate_agent(self, agent_id: str, agent_token: str) -> Optional[sqlite3.Row]:
         with self.connect() as conn:
-            return conn.execute("select * from agents where agent_id = ? and agent_token = ?", (agent_id, agent_token)).fetchone()
+            row = conn.execute(
+                "select * from agents where agent_id = ? and agent_token = ? and credential_revoked_at is null and status != 'revoked'",
+                (agent_id, agent_token),
+            ).fetchone()
+            if row:
+                self._record_agent_credential_event(
+                    conn,
+                    row["tenant_id"],
+                    row["agent_id"],
+                    "authenticated",
+                    int(row["credential_version"] or 1),
+                    {"status": "ok"},
+                )
+            return row
+
+    def revoke_agent_credential(self, tenant_id: str, agent_id: str, reason: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        now = utc_now()
+        with self.connect() as conn:
+            row = conn.execute("select * from agents where tenant_id=? and agent_id=?", (tenant_id, agent_id)).fetchone()
+            if not row:
+                return None
+            version = int(row["credential_version"] or 1)
+            conn.execute(
+                "update agents set status='revoked', credential_revoked_at=? where tenant_id=? and agent_id=?",
+                (now, tenant_id, agent_id),
+            )
+            self._record_agent_credential_event(conn, tenant_id, agent_id, "revoked", version, {"reason": reason or ""})
+            updated = conn.execute("select * from agents where tenant_id=? and agent_id=?", (tenant_id, agent_id)).fetchone()
+        return self._agent_record(dict(updated)) if updated else None
+
+    def rotate_agent_credential(self, tenant_id: str, agent_id: str, reason: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        now = utc_now()
+        new_token = secrets.token_urlsafe(32)
+        with self.connect() as conn:
+            row = conn.execute("select * from agents where tenant_id=? and agent_id=?", (tenant_id, agent_id)).fetchone()
+            if not row:
+                return None
+            if row["credential_revoked_at"] or row["status"] == "revoked":
+                raise ValueError("agent_credential_revoked")
+            next_version = int(row["credential_version"] or 1) + 1
+            conn.execute(
+                "update agents set pending_agent_token=?, pending_credential_version=?, pending_credential_created_at=? where tenant_id=? and agent_id=?",
+                (new_token, next_version, now, tenant_id, agent_id),
+            )
+            self._record_agent_credential_event(conn, tenant_id, agent_id, "rotation_scheduled", next_version, {"reason": reason or ""})
+            updated = conn.execute("select * from agents where tenant_id=? and agent_id=?", (tenant_id, agent_id)).fetchone()
+        if not updated:
+            return None
+        result = self._agent_record(dict(updated))
+        result["credential_version"] = next_version
+        result["credential_status"] = "pending_rotation"
+        return result
+
+    def activate_pending_agent_credential(self, tenant_id: str, agent_id: str) -> Optional[Dict[str, Any]]:
+        now = utc_now()
+        with self.connect() as conn:
+            row = conn.execute("select * from agents where tenant_id=? and agent_id=?", (tenant_id, agent_id)).fetchone()
+            if not row or not row["pending_agent_token"] or not row["pending_credential_version"]:
+                return None
+            token = row["pending_agent_token"]
+            version = int(row["pending_credential_version"])
+            conn.execute(
+                "update agents set agent_token=?, credential_version=?, credential_rotated_at=?, pending_agent_token=null, pending_credential_version=null, pending_credential_created_at=null where tenant_id=? and agent_id=?",
+                (token, version, now, tenant_id, agent_id),
+            )
+            self._record_agent_credential_event(conn, tenant_id, agent_id, "rotated", version, {"delivery": "heartbeat"})
+        return {"agent_token": token, "credential_version": version}
+
+    def list_agent_credential_events(self, tenant_id: str, agent_id: str) -> List[Dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "select event_id, tenant_id, agent_id, event_type, credential_version, created_at, metadata_json from agent_credential_events where tenant_id=? and agent_id=? order by created_at, rowid",
+                (tenant_id, agent_id),
+            ).fetchall()
+        return [
+            {
+                "event_id": row["event_id"],
+                "tenant_id": row["tenant_id"],
+                "agent_id": row["agent_id"],
+                "event_type": row["event_type"],
+                "credential_version": row["credential_version"],
+                "created_at": row["created_at"],
+                "metadata": json.loads(row["metadata_json"] or "{}"),
+            }
+            for row in rows
+        ]
+
+    def _record_agent_credential_event(self, conn: sqlite3.Connection, tenant_id: str, agent_id: str, event_type: str, credential_version: int, metadata: Dict[str, Any]) -> None:
+        conn.execute(
+            "insert into agent_credential_events(event_id, tenant_id, agent_id, event_type, credential_version, created_at, metadata_json) values (?, ?, ?, ?, ?, ?, ?)",
+            (str(uuid4()), tenant_id, agent_id, event_type, credential_version, utc_now(), json.dumps(metadata)),
+        )
 
     def update_heartbeat(self, agent_id: str, host: str, ip_address: Optional[str], os: Optional[str], agent_version: str, health: Dict[str, Any]) -> None:
         with self.connect() as conn:
@@ -402,12 +516,12 @@ class SQLiteStore:
             args.append(status)
         q += " order by host"
         with self.connect() as conn:
-            return [dict(r) for r in conn.execute(q, args).fetchall()]
+            return [self._agent_record(dict(r)) for r in conn.execute(q, args).fetchall()]
 
     def get_agent(self, tenant_id: str, agent_id: str) -> Optional[Dict[str, Any]]:
         with self.connect() as conn:
             row = conn.execute("select * from agents where tenant_id=? and agent_id=?", (tenant_id, agent_id)).fetchone()
-        return dict(row) if row else None
+        return self._agent_record(dict(row)) if row else None
 
     def tenant_summary(self, tenant_id: str) -> Dict[str, Any]:
         with self.connect() as conn:
@@ -808,3 +922,16 @@ class SQLiteStore:
             completed_at=datetime.fromisoformat(row["completed_at"]) if row.get("completed_at") else None,
             result=json.loads(row["result_json"]) if row.get("result_json") else None, error=row.get("error"), raw_ref=row.get("raw_ref"), raw_hash=row.get("raw_hash"),
         )
+
+    def _agent_record(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        row.pop("agent_token", None)
+        row.pop("pending_agent_token", None)
+        row["credential_version"] = int(row.get("credential_version") or 1)
+        if row.get("credential_revoked_at"):
+            row["credential_status"] = "revoked"
+        elif row.get("pending_credential_version"):
+            row["credential_version"] = int(row["pending_credential_version"])
+            row["credential_status"] = "pending_rotation"
+        else:
+            row["credential_status"] = "active"
+        return row

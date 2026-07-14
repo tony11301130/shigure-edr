@@ -22,6 +22,7 @@ from open_edr_mdr_agent.api.models import (
     EnrollmentResponse,
     EventIngestRequest,
     EventIngestResponse,
+    AgentCredentialUpdate,
     HeartbeatRequest,
     HeartbeatResponse,
     TaskClaimRequest,
@@ -106,7 +107,9 @@ def create_app(
         store.update_heartbeat(agent["agent_id"], req.host, req.ip_address, req.os, req.agent_version, req.health)
         pending = store.pending_tasks_count(agent["tenant_id"], agent["agent_id"]) > 0
         config = store.get_agent_config(agent["tenant_id"])
-        return HeartbeatResponse(status="ok", tasks_pending=pending, config_version=config.version, config=config)
+        credential_update = store.activate_pending_agent_credential(agent["tenant_id"], agent["agent_id"])
+        update = AgentCredentialUpdate(**credential_update) if credential_update else None
+        return HeartbeatResponse(status="ok", tasks_pending=pending, config_version=config.version, config=config, credential_update=update)
 
     @app.post("/api/v1/agents/{agent_id}/events", response_model=EventIngestResponse)
     def ingest_events(agent=Depends(_agent_auth), req: EventIngestRequest = None):
@@ -187,6 +190,29 @@ def create_app(
         if not agent:
             raise HTTPException(status_code=404, detail="agent_not_found")
         return agent
+
+    @app.post("/api/v1/admin/agents/{agent_id}/credential/revoke", response_model=AgentRecord)
+    def revoke_agent_credential(agent_id: str, tenant_id: str = Query("default"), reason: Optional[str] = None, _admin=Depends(_admin_auth)):
+        agent = store.revoke_agent_credential(tenant_id, agent_id, reason=reason)
+        if not agent:
+            raise HTTPException(status_code=404, detail="agent_not_found")
+        return agent
+
+    @app.post("/api/v1/admin/agents/{agent_id}/credential/rotate")
+    def rotate_agent_credential(agent_id: str, tenant_id: str = Query("default"), reason: Optional[str] = None, _admin=Depends(_admin_auth)):
+        try:
+            agent = store.rotate_agent_credential(tenant_id, agent_id, reason=reason)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not agent:
+            raise HTTPException(status_code=404, detail="agent_not_found")
+        return agent
+
+    @app.get("/api/v1/admin/agents/{agent_id}/credential/events")
+    def list_agent_credential_events(agent_id: str, tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):
+        if not store.get_agent(tenant_id, agent_id):
+            raise HTTPException(status_code=404, detail="agent_not_found")
+        return {"tenant_id": tenant_id, "agent_id": agent_id, "events": store.list_agent_credential_events(tenant_id, agent_id)}
 
     @app.get("/api/v1/admin/summary")
     def tenant_summary(tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):
@@ -446,7 +472,6 @@ def create_app(
     def _deployment_config(tenant_id: str, server_url: str, enrollment_token: str) -> dict:
         runtime = app.state.runtime_config
         server_trust = runtime.get("server_trust", "")
-        trust_arg = f" --server-trust {server_trust}" if server_trust else ""
         return {
             "tenant_id": tenant_id,
             "profile": runtime["profile"],
@@ -458,7 +483,8 @@ def create_app(
             "data_dir": "C:\\ProgramData\\Shiori",
             "identity_file": "C:\\ProgramData\\Shiori\\shiori-agent-state.json",
             "spool_file": "C:\\ProgramData\\Shiori\\spool.jsonl",
-            "install_command": f".\\shiori-agent.exe --install-service --profile {runtime['profile']} --server {server_url} --enroll-token {enrollment_token}{trust_arg}",
+            "installed_config_file": "C:\\ProgramData\\Shiori\\shiori-agent-config.json",
+            "install_command": ".\\shiori-agent.exe --install-service --config C:\\ProgramData\\Shiori\\shiori-agent-config.json",
             "package_install_command": ".\\install.ps1",
             "start_command": "sc.exe start ShioriAgent",
             "enrollment_model": {
@@ -502,17 +528,19 @@ if (!$Config.enrollment_token) { throw "enrollment_token missing from config" }
 $InstallDir = $Config.install_dir
 $DataDir = $Config.data_dir
 $Profile = $Config.profile
-$ServerTrust = $Config.server_trust
 if (!$InstallDir) { $InstallDir = "C:\Program Files\Shiori" }
 if (!$DataDir) { $DataDir = "C:\ProgramData\Shiori" }
 if (!$Profile) { $Profile = "dev" }
 Write-Host "Installing Shiori Agent for $($Config.server_url)"
-$Args = @("--install-service", "--profile", $Profile, "--server", $Config.server_url, "--enroll-token", $Config.enrollment_token, "--install-dir", $InstallDir, "--state", (Join-Path $DataDir "shiori-agent-state.json"), "--spool", (Join-Path $DataDir "spool.jsonl"))
-if ($ServerTrust) { $Args += @("--server-trust", $ServerTrust) }
+New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
+$InstalledConfig = Join-Path $DataDir "shiori-agent-config.json"
+Copy-Item -Force $ConfigPath $InstalledConfig
+$Args = @("--install-service", "--config", $InstalledConfig, "--install-dir", $InstallDir, "--state", (Join-Path $DataDir "shiori-agent-state.json"), "--spool", (Join-Path $DataDir "spool.jsonl"))
 & $Agent @Args
 sc.exe start ShioriAgent
 Write-Host "Installed. Service binary: $(Join-Path $InstallDir 'shiori-agent.exe')"
 Write-Host "Endpoint state: $(Join-Path $DataDir 'shiori-agent-state.json')"
+Write-Host "Agent config: $InstalledConfig"
 """
         readme = r"""Shiori Agent deployment package
 
@@ -526,6 +554,8 @@ Enrollment model:
 2. On first successful registration, the server creates the endpoint record and returns a per-endpoint credential.
 3. The endpoint stores that credential as C:\ProgramData\Shiori\shiori-agent-state.json and uses it for future authentication.
 4. The shared enrollment token should not be used as the long-term endpoint identity.
+5. install.ps1 copies the bootstrap config to C:\ProgramData\Shiori and installs the service with --config, so the service command line does not contain the enrollment token.
+6. After the first successful enrollment, the agent removes enrollment_token from the installed config file; recovery should use a fresh enrollment token.
 
 Run from elevated PowerShell:
   Set-ExecutionPolicy -Scope Process Bypass

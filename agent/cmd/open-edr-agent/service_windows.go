@@ -33,11 +33,7 @@ func installService(serviceName, displayName string, opts agentOptions, installD
 			return err
 		}
 	}
-	args := []string{"--profile", opts.Profile, "--server", opts.Server, "--enroll-token", opts.EnrollToken, "--state", opts.StatePath, "--spool", opts.SpoolPath}
-	if opts.ServerTrust != "" {
-		args = append(args, "--server-trust", opts.ServerTrust)
-	}
-	binPath := windowsServiceCommandLine(installedExe, args)
+	binPath := windowsServiceCommandLine(installedExe, serviceRuntimeArgs(opts))
 	cmd := exec.Command("sc.exe", "create", serviceName, "binPath=", binPath, "DisplayName=", displayName, "start=", "auto")
 	out, err := cmd.CombinedOutput()
 	if err != nil {

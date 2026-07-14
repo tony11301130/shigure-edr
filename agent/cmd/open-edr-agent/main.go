@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -23,6 +24,7 @@ const version = "0.1.0-dev"
 
 type agentOptions struct {
 	Profile           string
+	ConfigPath        string
 	Server            string
 	EnrollToken       string
 	ServerTrust       string
@@ -36,6 +38,7 @@ type agentOptions struct {
 }
 
 func main() {
+	configPath := flag.String("config", "", "agent JSON config path")
 	profile := flag.String("profile", "", "runtime profile: dev, demo, or production")
 	server := flag.String("server", "http://127.0.0.1:8000", "backend server URL")
 	enrollToken := flag.String("enroll-token", "dev-token", "tenant enrollment token")
@@ -54,7 +57,10 @@ func main() {
 	installDir := flag.String("install-dir", defaultInstallDir(), "Windows service binary install directory")
 	flag.Parse()
 
-	opts := agentOptions{Profile: *profile, Server: *server, EnrollToken: *enrollToken, ServerTrust: *serverTrust, StatePath: *statePath, SpoolPath: *spoolPath, Once: *once, DemoEvent: *demoEvent, CollectSnapshot: *collectSnapshot, MaxSnapshotEvents: *maxSnapshotEvents, Interval: *interval}
+	opts := agentOptions{Profile: *profile, ConfigPath: *configPath, Server: *server, EnrollToken: *enrollToken, ServerTrust: *serverTrust, StatePath: *statePath, SpoolPath: *spoolPath, Once: *once, DemoEvent: *demoEvent, CollectSnapshot: *collectSnapshot, MaxSnapshotEvents: *maxSnapshotEvents, Interval: *interval}
+	if err := applyConfigFile(&opts); err != nil {
+		log.Fatalf("load config failed: %v", err)
+	}
 	if err := validateAgentOptions(opts); err != nil {
 		log.Fatalf("invalid configuration: %v", err)
 	}
@@ -105,14 +111,87 @@ func validateAgentOptions(opts agentOptions) error {
 		return fmt.Errorf("production requires https server URL")
 	}
 	token := strings.ToLower(strings.TrimSpace(opts.EnrollToken))
-	switch token {
-	case "", "dev-token", "enroll-token", "changeme", "change-me":
+	if token == "" {
+		if _, err := os.Stat(opts.StatePath); err != nil {
+			return fmt.Errorf("production requires an enrollment token until agent state exists")
+		}
+	} else if token == "dev-token" || token == "enroll-token" || token == "changeme" || token == "change-me" {
 		return fmt.Errorf("production enrollment token must not use a default or dev value")
 	}
 	if strings.TrimSpace(opts.ServerTrust) == "" {
 		return fmt.Errorf("production requires server trust configuration")
 	}
 	return nil
+}
+
+type bootstrapConfig struct {
+	Profile         string `json:"profile"`
+	ServerURL       string `json:"server_url"`
+	EnrollmentToken string `json:"enrollment_token"`
+	ServerTrust     string `json:"server_trust"`
+}
+
+func applyConfigFile(opts *agentOptions) error {
+	if strings.TrimSpace(opts.ConfigPath) == "" {
+		return nil
+	}
+	b, err := os.ReadFile(opts.ConfigPath)
+	if err != nil {
+		return fmt.Errorf("read config: %w", err)
+	}
+	var cfg bootstrapConfig
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		return fmt.Errorf("parse config: %w", err)
+	}
+	if cfg.Profile != "" {
+		opts.Profile = cfg.Profile
+	}
+	if cfg.ServerURL != "" {
+		opts.Server = cfg.ServerURL
+	}
+	opts.EnrollToken = cfg.EnrollmentToken
+	if cfg.ServerTrust != "" {
+		opts.ServerTrust = cfg.ServerTrust
+	}
+	return nil
+}
+
+func scrubEnrollmentTokenFromConfig(configPath string) error {
+	if strings.TrimSpace(configPath) == "" {
+		return nil
+	}
+	b, err := os.ReadFile(configPath)
+	if err != nil {
+		return fmt.Errorf("read config: %w", err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		return fmt.Errorf("parse config: %w", err)
+	}
+	if _, ok := cfg["enrollment_token"]; !ok {
+		return nil
+	}
+	delete(cfg, "enrollment_token")
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode config: %w", err)
+	}
+	out = append(out, '\n')
+	return os.WriteFile(configPath, out, 0600)
+}
+
+func serviceRuntimeArgs(opts agentOptions) []string {
+	args := []string{}
+	if strings.TrimSpace(opts.ConfigPath) != "" {
+		args = append(args, "--config", opts.ConfigPath)
+	} else {
+		args = append(args, "--profile", opts.Profile, "--server", opts.Server, "--enroll-token", opts.EnrollToken)
+		if opts.ServerTrust != "" {
+			args = append(args, "--server-trust", opts.ServerTrust)
+		}
+	}
+	args = append(args, "--state", opts.StatePath, "--spool", opts.SpoolPath)
+	return args
 }
 
 func runAgent(opts agentOptions, stop <-chan struct{}) error {
@@ -130,12 +209,15 @@ func runAgent(opts agentOptions, stop <-chan struct{}) error {
 		if err := state.Save(opts.StatePath, agentState); err != nil {
 			return fmt.Errorf("save state failed: %w", err)
 		}
+		if err := scrubEnrollmentTokenFromConfig(opts.ConfigPath); err != nil {
+			return fmt.Errorf("scrub enrollment token from config failed: %w", err)
+		}
 		log.Printf("enrolled agent_id=%s tenant_id=%s", agentState.AgentID, agentState.TenantID)
 	}
 
 	runtimeConfig := agentapi.AgentConfig{TaskPollSeconds: int(opts.Interval.Seconds()), HeartbeatSeconds: int(opts.Interval.Seconds()), UploadIntervalSeconds: int(opts.Interval.Seconds()), MaxSnapshotEvents: opts.MaxSnapshotEvents, CollectSnapshot: opts.CollectSnapshot, CollectProcessSnapshot: true, CollectNetworkSnapshot: true, CollectWindowsEventLogs: true, DemoSuspiciousEvent: opts.DemoEvent}
 	for {
-		newConfig, err := runCycle(client, agentState, opts.SpoolPath, runtimeConfig)
+		newConfig, err := runCycle(client, agentState, opts.StatePath, opts.SpoolPath, runtimeConfig)
 		if err != nil {
 			log.Printf("cycle error: %v", err)
 		}
@@ -167,10 +249,10 @@ func enroll(client *agentapi.Client, token string) (*state.State, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &state.State{TenantID: res.TenantID, AgentID: res.AgentID, AgentToken: res.AgentToken}, nil
+	return &state.State{TenantID: res.TenantID, AgentID: res.AgentID, AgentToken: res.AgentToken, CredentialVersion: res.CredentialVersion}, nil
 }
 
-func runCycle(client *agentapi.Client, s *state.State, spoolPath string, cfg agentapi.AgentConfig) (*agentapi.AgentConfig, error) {
+func runCycle(client *agentapi.Client, s *state.State, statePath string, spoolPath string, cfg agentapi.AgentConfig) (*agentapi.AgentConfig, error) {
 	if err := spool.Flush(spoolPath, client, s); err != nil {
 		log.Printf("spool flush failed: %v", err)
 	}
@@ -181,6 +263,16 @@ func runCycle(client *agentapi.Client, s *state.State, spoolPath string, cfg age
 	})
 	if err != nil {
 		log.Printf("heartbeat failed, continuing so telemetry can spool if needed: %v", err)
+	} else if heartbeat != nil && heartbeat.CredentialUpdate != nil {
+		update := heartbeat.CredentialUpdate
+		if strings.TrimSpace(update.AgentToken) != "" && update.CredentialVersion > s.CredentialVersion {
+			s.AgentToken = update.AgentToken
+			s.CredentialVersion = update.CredentialVersion
+			if err := state.Save(statePath, s); err != nil {
+				return heartbeatConfig(heartbeat), fmt.Errorf("save rotated credential: %w", err)
+			}
+			log.Printf("agent credential rotated to version=%d", s.CredentialVersion)
+		}
 	}
 
 	events := []agentapi.NormalizedEvent{}

@@ -54,10 +54,11 @@ type EnrollmentRequest struct {
 }
 
 type EnrollmentResponse struct {
-	TenantID   string         `json:"tenant_id"`
-	AgentID    string         `json:"agent_id"`
-	AgentToken string         `json:"agent_token"`
-	Config     map[string]any `json:"config"`
+	TenantID          string         `json:"tenant_id"`
+	AgentID           string         `json:"agent_id"`
+	AgentToken        string         `json:"agent_token"`
+	CredentialVersion int            `json:"credential_version"`
+	Config            map[string]any `json:"config"`
 }
 
 type NormalizedEvent struct {
@@ -96,10 +97,16 @@ type AgentConfig struct {
 }
 
 type HeartbeatResponse struct {
-	Status        string      `json:"status"`
-	TasksPending  bool        `json:"tasks_pending"`
-	ConfigVersion int         `json:"config_version"`
-	Config        AgentConfig `json:"config"`
+	Status           string            `json:"status"`
+	TasksPending     bool              `json:"tasks_pending"`
+	ConfigVersion    int               `json:"config_version"`
+	Config           AgentConfig       `json:"config"`
+	CredentialUpdate *CredentialUpdate `json:"credential_update,omitempty"`
+}
+
+type CredentialUpdate struct {
+	AgentToken        string `json:"agent_token"`
+	CredentialVersion int    `json:"credential_version"`
 }
 
 type Task struct {

@@ -23,6 +23,8 @@ def test_agent_config_download_contains_enrollment_material(tmp_path):
     assert body["server_url"] == "https://edr.intra"
     assert body["enrollment_token"]
     assert "--install-service" in body["install_command"]
+    assert "--config" in body["install_command"]
+    assert "--enroll-token" not in body["install_command"]
     assert "Content-Disposition" in res.headers
 
     tokens = client.get("/api/v1/admin/enrollment-tokens", headers=ADMIN, params={"tenant_id": "default"}).json()["tokens"]
@@ -68,11 +70,13 @@ def test_agent_package_zip_contains_binary_config_and_installer(tmp_path, monkey
         assert config["spool_file"] == "C:\\ProgramData\\Shiori\\spool.jsonl"
         assert "per-endpoint credential" in config["enrollment_model"]["stage_2"]
         install_ps1 = zf.read("install.ps1").decode()
-        assert "--enroll-token" in install_ps1
+        assert "--enroll-token" not in install_ps1
         assert "--install-dir" in install_ps1
-        assert "--config" not in install_ps1
+        assert "--config" in install_ps1
         readme = zf.read("README.txt").decode()
         assert "C:\\ProgramData\\Shiori\\shiori-agent-state.json" in readme
+        assert "service command line does not contain the enrollment token" in readme
+        assert "removes enrollment_token from the installed config" in readme
 
 
 def test_minimal_ui_contains_endpoint_task_and_download_controls(tmp_path):

@@ -22,6 +22,7 @@ class EnrollmentResponse(BaseModel):
     tenant_id: str
     agent_id: str
     agent_token: str
+    credential_version: int = 1
     config: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -32,6 +33,11 @@ class HeartbeatRequest(BaseModel):
     agent_version: str = "dev"
     uptime_seconds: Optional[int] = None
     health: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentCredentialUpdate(BaseModel):
+    agent_token: str
+    credential_version: int
 
 
 class AgentConfig(BaseModel):
@@ -53,6 +59,7 @@ class HeartbeatResponse(BaseModel):
     tasks_pending: bool = False
     config_version: int = 1
     config: AgentConfig = Field(default_factory=AgentConfig)
+    credential_update: Optional[AgentCredentialUpdate] = None
 
 
 class EventIngestRequest(BaseModel):
@@ -125,5 +132,9 @@ class AgentRecord(BaseModel):
     os: Optional[str] = None
     agent_version: str = "dev"
     status: str = "online"
+    credential_version: int = 1
+    credential_status: str = "active"
+    credential_revoked_at: Optional[datetime] = None
+    credential_rotated_at: Optional[datetime] = None
     enrolled_at: datetime
     last_seen: Optional[datetime] = None

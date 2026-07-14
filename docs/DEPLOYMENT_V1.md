@@ -51,10 +51,12 @@ The current binary, service, and Windows path examples still use Shiori compatib
 Install as a Windows Service after validating the command line. The installer copies the service binary to `C:\Program Files\Shiori\shiori-agent.exe` and stores endpoint state/spool files under `C:\ProgramData\Shiori` by default:
 
 ```powershell
-.\shiori-agent.exe --install-service --profile production --server https://edr.internal.example --enroll-token <initial-enrollment-token> --server-trust system
+.\shiori-agent.exe --install-service --config C:\ProgramData\Shiori\shiori-agent-config.json
 Start-Service ShioriAgent
 sc.exe qc ShioriAgent
 ```
+
+The generated deployment package copies `shiori-agent-config.json` into `C:\ProgramData\Shiori` and installs the service with `--config`; the service command line should not contain the enrollment token. After the first successful enrollment, the agent removes `enrollment_token` from the installed config file so restart/authentication uses only the state file's per-agent credential. Direct `--enroll-token` startup remains available for dev/demo/manual diagnostics, but production service installs should prefer config-file bootstrap.
 
 Uninstall if needed:
 
@@ -62,6 +64,16 @@ Uninstall if needed:
 Stop-Service ShioriAgent
 & 'C:\Program Files\Shiori\shiori-agent.exe' --uninstall-service
 ```
+
+## Agent credential lifecycle
+
+- Enrollment tokens are tenant-scoped bootstrap material. They are used only by `/api/v1/enroll`.
+- After enrollment, the server returns a per-agent credential and a credential version. The agent stores these in `C:\ProgramData\Shiori\shiori-agent-state.json`.
+- Heartbeat, telemetry upload, task claim/result upload, and evidence upload authenticate with the per-agent credential, not the enrollment token.
+- Admins can schedule an agent credential rotation when routine rotation or suspected exposure requires it. The rotation API records the next credential version without returning the new secret; the agent receives the new credential on its next successful heartbeat, persists it to local state, and uses it for subsequent heartbeat, telemetry, task, and evidence calls.
+- Admins can revoke an agent credential for retired or compromised endpoints. Revoked agents cannot heartbeat, upload events, claim tasks, or upload evidence.
+- If local state is lost or corrupt, recover by revoking the old agent credential, placing a fresh short-lived or max-use enrollment token into the agent config, and enrolling the endpoint again. Do not restore the originally used bootstrap token.
+- Credential lifecycle events distinguish `enrolled`, `authenticated`, `rotation_scheduled`, `rotated`, and `revoked` for operator audit and troubleshooting.
 
 ## Analyst validation checklist
 
