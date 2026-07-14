@@ -15,6 +15,7 @@ import (
 
 func platformProcessSnapshot(tenantID string, max int) []agentapi.NormalizedEvent {
 	inv := HostInventory()
+	bootID := hostBootID()
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return nil
@@ -28,8 +29,11 @@ func platformProcessSnapshot(tenantID string, max int) []agentapi.NormalizedEven
 		comm, _ := os.ReadFile(filepath.Join("/proc", e.Name(), "comm"))
 		cmd, _ := os.ReadFile(filepath.Join("/proc", e.Name(), "cmdline"))
 		stat, _ := os.ReadFile(filepath.Join("/proc", e.Name(), "stat"))
+		imagePath, _ := os.Readlink(filepath.Join("/proc", e.Name(), "exe"))
 		ppid := parsePPID(string(stat))
-		out = append(out, agentapi.NormalizedEvent{Source: "internal", EventType: "process_start", TenantID: tenantID, Host: inv.Host, ProcessName: strings.TrimSpace(string(comm)), ProcessID: strconv.Itoa(pid), ParentProcessID: ppid, CommandLine: strings.TrimSpace(strings.ReplaceAll(string(cmd), "\x00", " ")), Severity: "info", Raw: map[string]any{"collector": "process_snapshot", "platform": "linux_proc"}})
+		event := agentapi.NormalizedEvent{Source: "internal", EventType: "process_start", TenantID: tenantID, Host: inv.Host, ProcessName: strings.TrimSpace(string(comm)), ProcessID: strconv.Itoa(pid), ParentProcessID: ppid, ProcessCreateTime: parseStartTime(string(stat)), ImagePath: imagePath, CommandLine: strings.TrimSpace(strings.ReplaceAll(string(cmd), "\x00", " ")), Severity: "info", Raw: map[string]any{"collector": "process_snapshot", "platform": "linux_proc", "image": imagePath}}
+		ApplyProcessIdentity(&event, bootID)
+		out = append(out, event)
 		if len(out) >= max {
 			break
 		}
@@ -83,8 +87,20 @@ func parsePPID(stat string) string {
 		return ""
 	}
 	fields := strings.Fields(stat[idx+1:])
-	if len(fields) >= 3 {
-		return fields[2]
+	if len(fields) >= 2 {
+		return fields[1]
+	}
+	return ""
+}
+
+func parseStartTime(stat string) string {
+	idx := strings.LastIndex(stat, ")")
+	if idx == -1 || len(stat) <= idx+4 {
+		return ""
+	}
+	fields := strings.Fields(stat[idx+1:])
+	if len(fields) >= 20 {
+		return fields[19]
 	}
 	return ""
 }

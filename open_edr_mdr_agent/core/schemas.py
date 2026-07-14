@@ -53,8 +53,17 @@ class NormalizedEvent(BaseModel):
     user: Optional[str] = None
     process_name: Optional[str] = None
     process_id: Optional[str] = None
+    process_entity_id: Optional[str] = None
     parent_process_name: Optional[str] = None
     parent_process_id: Optional[str] = None
+    parent_process_entity_id: Optional[str] = None
+    boot_id: Optional[str] = None
+    process_create_time: Optional[str] = None
+    process_exit_time: Optional[str] = None
+    image_path: Optional[str] = None
+    image_hash: Optional[str] = None
+    process_identity_confidence: Optional[str] = None
+    missing_parent_reason: Optional[str] = None
     command_line: Optional[str] = None
     file_path: Optional[str] = None
     hash_sha256: Optional[str] = None

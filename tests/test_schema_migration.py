@@ -40,9 +40,25 @@ def test_store_adds_raw_reference_columns_to_legacy_tables(tmp_path):
     conn.close()
 
     store = SQLiteStore(db)
-    event = NormalizedEvent(source=Source.INTERNAL, event_type=EventType.PROCESS_START, tenant_id="default", host="LEGACY01", process_name="cmd.exe", raw={"legacy": True})
+    event = NormalizedEvent(
+        source=Source.INTERNAL,
+        event_type=EventType.PROCESS_START,
+        tenant_id="default",
+        host="LEGACY01",
+        process_name="cmd.exe",
+        process_id="123",
+        process_entity_id="peid:LEGACY01:boot-a:123:2026-07-14T00:00:00Z",
+        parent_process_entity_id="peid:LEGACY01:boot-a:1:2026-07-14T00:00:00Z",
+        boot_id="boot-a",
+        process_create_time="2026-07-14T00:00:00Z",
+        image_path="C:/Windows/System32/cmd.exe",
+        image_hash="c" * 64,
+        process_identity_confidence="high",
+        raw={"legacy": True},
+    )
     assert store.insert_events("agent-1", [event]) == 1
 
     rows = store.list_events("default", host="LEGACY01")
     assert rows[0].raw_ref
     assert rows[0].raw_hash
+    assert rows[0].process_entity_id == "peid:LEGACY01:boot-a:123:2026-07-14T00:00:00Z"

@@ -231,11 +231,12 @@ def create_app(
         process_name: Optional[str] = None,
         user: Optional[str] = None,
         hash_sha256: Optional[str] = None,
+        process_entity_id: Optional[str] = None,
         remote_ip: Optional[str] = None,
         domain: Optional[str] = None,
         indicator: Optional[str] = None,
     ):
-        return {"tenant_id": tenant_id, "count": store.count_events(tenant_id, host=host, event_type=event_type, process_name=process_name, user=user, hash_sha256=hash_sha256, remote_ip=remote_ip, domain=domain, indicator=indicator)}
+        return {"tenant_id": tenant_id, "count": store.count_events(tenant_id, host=host, event_type=event_type, process_name=process_name, user=user, hash_sha256=hash_sha256, process_entity_id=process_entity_id, remote_ip=remote_ip, domain=domain, indicator=indicator)}
 
     @app.get("/api/v1/admin/events/related", response_model=list[NormalizedEvent])
     def related_events(entity_type: str, value: str, tenant_id: str = Query("default"), limit: int = 100, _admin=Depends(_admin_auth)):
@@ -257,12 +258,13 @@ def create_app(
         process_name: Optional[str] = None,
         user: Optional[str] = None,
         hash_sha256: Optional[str] = None,
+        process_entity_id: Optional[str] = None,
         remote_ip: Optional[str] = None,
         domain: Optional[str] = None,
         indicator: Optional[str] = None,
         limit: int = 100,
     ):
-        return store.list_events(tenant_id, host=host, event_type=event_type, process_name=process_name, user=user, hash_sha256=hash_sha256, remote_ip=remote_ip, domain=domain, indicator=indicator, limit=limit)
+        return store.list_events(tenant_id, host=host, event_type=event_type, process_name=process_name, user=user, hash_sha256=hash_sha256, process_entity_id=process_entity_id, remote_ip=remote_ip, domain=domain, indicator=indicator, limit=limit)
 
     @app.get("/api/v1/admin/tasks", response_model=list[TaskRecord])
     def list_tasks(tenant_id: str = Query("default"), agent_id: Optional[str] = None, status: Optional[str] = None, limit: int = 100, _admin=Depends(_admin_auth)):
@@ -390,8 +392,42 @@ def create_app(
         return store.list_hunt_runs(tenant_id, hunt_id=hunt_id, limit=limit)
 
     @app.get("/api/v1/admin/investigate/process-chain")
-    def process_chain(host: str, process_id: str, tenant_id: str = Query("default"), limit: int = 500, _admin=Depends(_admin_auth)):
+    def process_chain(host: str, process_id: Optional[str] = None, process_entity_id: Optional[str] = None, tenant_id: str = Query("default"), limit: int = 500, _admin=Depends(_admin_auth)):
+        if not process_id and not process_entity_id:
+            raise HTTPException(status_code=400, detail="process_id_or_process_entity_id_required")
         events = store.list_events(tenant_id, host=host, limit=limit)
+        if process_entity_id:
+            by_entity = {e.process_entity_id: e for e in events if e.process_entity_id}
+            chain = []
+            gaps = []
+            children = [e for e in events if e.parent_process_entity_id == process_entity_id]
+            seen = set()
+            current = process_entity_id
+            while current and current not in seen and current in by_entity:
+                seen.add(current)
+                event = by_entity[current]
+                chain.append(event)
+                parent = event.parent_process_entity_id
+                if event.missing_parent_reason and (not parent or parent not in by_entity):
+                    gaps.append(
+                        {
+                            "process_entity_id": event.process_entity_id,
+                            "parent_process_entity_id": parent,
+                            "missing_parent_reason": event.missing_parent_reason,
+                            "process_identity_confidence": event.process_identity_confidence,
+                        }
+                    )
+                current = parent
+            return {
+                "tenant_id": tenant_id,
+                "host": host,
+                "identity_mode": "process_entity",
+                "process_entity_id": process_entity_id,
+                "process_id": chain[0].process_id if chain else process_id,
+                "chain": chain,
+                "children": children[:100],
+                "gaps": gaps,
+            }
         by_pid = {e.process_id: e for e in events if e.process_id}
         chain = []
         children = [e for e in events if e.parent_process_id == process_id]
@@ -402,25 +438,29 @@ def create_app(
             event = by_pid[current]
             chain.append(event)
             current = event.parent_process_id
-        return {"tenant_id": tenant_id, "host": host, "process_id": process_id, "chain": chain, "children": children[:100]}
+        return {"tenant_id": tenant_id, "host": host, "identity_mode": "pid_compat", "process_id": process_id, "chain": chain, "children": children[:100], "gaps": []}
 
     @app.get("/api/v1/admin/investigate/behavior-context")
-    def behavior_context(host: str, tenant_id: str = Query("default"), process_id: Optional[str] = None, indicator: Optional[str] = None, limit: int = 200, _admin=Depends(_admin_auth)):
+    def behavior_context(host: str, tenant_id: str = Query("default"), process_id: Optional[str] = None, process_entity_id: Optional[str] = None, indicator: Optional[str] = None, limit: int = 200, _admin=Depends(_admin_auth)):
         events = store.list_events(tenant_id, host=host, indicator=indicator, limit=limit)
+        if process_entity_id:
+            events = [e for e in events if e.process_entity_id == process_entity_id or e.parent_process_entity_id == process_entity_id]
         if process_id:
             events = [e for e in events if e.process_id == process_id or e.parent_process_id == process_id]
         by_type: dict[str, int] = {}
         for event in events:
             by_type[event.event_type.value] = by_type.get(event.event_type.value, 0) + 1
-        return {"tenant_id": tenant_id, "host": host, "process_id": process_id, "indicator": indicator, "counts_by_type": by_type, "events": events}
+        return {"tenant_id": tenant_id, "host": host, "process_id": process_id, "process_entity_id": process_entity_id, "indicator": indicator, "counts_by_type": by_type, "events": events}
 
     @app.get("/api/v1/admin/investigate/network-context")
-    def network_context(host: str, tenant_id: str = Query("default"), process_id: Optional[str] = None, remote_ip: Optional[str] = None, limit: int = 200, _admin=Depends(_admin_auth)):
+    def network_context(host: str, tenant_id: str = Query("default"), process_id: Optional[str] = None, process_entity_id: Optional[str] = None, remote_ip: Optional[str] = None, limit: int = 200, _admin=Depends(_admin_auth)):
         events = store.list_events(tenant_id, host=host, event_type="network_connection", remote_ip=remote_ip, limit=limit)
+        if process_entity_id:
+            events = [e for e in events if e.process_entity_id == process_entity_id]
         if process_id:
             events = [e for e in events if e.process_id == process_id]
         remotes = sorted({f"{e.remote_ip}:{e.remote_port}" for e in events if e.remote_ip})
-        return {"tenant_id": tenant_id, "host": host, "process_id": process_id, "remote_ip": remote_ip, "remotes": remotes, "events": events}
+        return {"tenant_id": tenant_id, "host": host, "process_id": process_id, "process_entity_id": process_entity_id, "remote_ip": remote_ip, "remotes": remotes, "events": events}
 
     @app.post("/api/v1/admin/cases", response_model=CaseRecord)
     def create_case(req: CaseCreateRequest, _admin=Depends(_admin_auth)):

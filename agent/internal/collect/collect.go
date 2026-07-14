@@ -23,11 +23,14 @@ func HostInventory() Inventory {
 
 func DemoSuspiciousPowerShellEvent(tenantID string) agentapi.NormalizedEvent {
 	inv := HostInventory()
-	return agentapi.NormalizedEvent{
+	event := agentapi.NormalizedEvent{
 		Source: "internal", EventType: "process_start", TenantID: tenantID, Host: inv.Host,
 		ProcessName: `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`, ProcessID: "4242", ParentProcessID: "100",
+		ImagePath:   `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`,
 		CommandLine: "powershell.exe -enc SQBFAFgA", Severity: "info", Raw: map[string]any{"collector": "demo"},
 	}
+	ApplyProcessIdentity(&event, hostBootID())
+	return event
 }
 
 func firstNonLoopbackIP() string {

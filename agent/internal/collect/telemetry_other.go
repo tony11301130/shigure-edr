@@ -13,7 +13,9 @@ import (
 
 func platformProcessSnapshot(tenantID string, max int) []agentapi.NormalizedEvent {
 	inv := HostInventory()
-	return []agentapi.NormalizedEvent{{Source: "internal", EventType: "process_start", TenantID: tenantID, Host: inv.Host, ProcessName: os.Args[0], ProcessID: strconv.Itoa(os.Getpid()), CommandLine: strings.Join(os.Args, " "), Severity: "info", Raw: map[string]any{"collector": "process_snapshot", "platform": runtime.GOOS, "note": "native collector pending for this OS"}}}
+	event := agentapi.NormalizedEvent{Source: "internal", EventType: "process_start", TenantID: tenantID, Host: inv.Host, ProcessName: os.Args[0], ProcessID: strconv.Itoa(os.Getpid()), ImagePath: os.Args[0], CommandLine: strings.Join(os.Args, " "), Severity: "info", Raw: map[string]any{"collector": "process_snapshot", "platform": runtime.GOOS, "note": "native collector pending for this OS"}}
+	ApplyProcessIdentity(&event, hostBootID())
+	return []agentapi.NormalizedEvent{event}
 }
 
 func platformNetworkSnapshot(tenantID string, max int) []agentapi.NormalizedEvent {

@@ -17,6 +17,7 @@ type winProcess struct {
 	Name            string `json:"Name"`
 	CommandLine     string `json:"CommandLine"`
 	ExecutablePath  string `json:"ExecutablePath"`
+	CreationDate    string `json:"CreationDate"`
 }
 
 type winNetConn struct {
@@ -48,14 +49,17 @@ type winEventLogQuery struct {
 
 func platformProcessSnapshot(tenantID string, max int) []agentapi.NormalizedEvent {
 	inv := HostInventory()
-	cmd := `Get-CimInstance Win32_Process | Select-Object -First ` + strconv.Itoa(max) + ` ProcessId,ParentProcessId,Name,CommandLine,ExecutablePath | ConvertTo-Json -Compress`
+	bootID := hostBootID()
+	cmd := `Get-CimInstance Win32_Process | Select-Object -First ` + strconv.Itoa(max) + ` ProcessId,ParentProcessId,Name,CommandLine,ExecutablePath,CreationDate | ConvertTo-Json -Compress`
 	var rows []winProcess
 	if err := runPowerShellJSON(cmd, &rows); err != nil {
 		return []agentapi.NormalizedEvent{{Source: "internal", EventType: "generic", TenantID: tenantID, Host: inv.Host, Severity: "low", Raw: map[string]any{"collector": "process_snapshot", "platform": "windows_cim", "error": err.Error()}}}
 	}
 	out := []agentapi.NormalizedEvent{}
 	for _, row := range rows {
-		out = append(out, agentapi.NormalizedEvent{Source: "internal", EventType: "process_start", TenantID: tenantID, Host: inv.Host, ProcessName: firstNonEmpty(row.ExecutablePath, row.Name), ProcessID: strconv.Itoa(row.ProcessID), ParentProcessID: strconv.Itoa(row.ParentProcessID), CommandLine: row.CommandLine, Severity: "info", Raw: map[string]any{"collector": "process_snapshot", "platform": "windows_cim", "image": row.ExecutablePath}})
+		event := agentapi.NormalizedEvent{Source: "internal", EventType: "process_start", TenantID: tenantID, Host: inv.Host, ProcessName: firstNonEmpty(row.ExecutablePath, row.Name), ProcessID: strconv.Itoa(row.ProcessID), ParentProcessID: strconv.Itoa(row.ParentProcessID), ProcessCreateTime: row.CreationDate, ImagePath: row.ExecutablePath, CommandLine: row.CommandLine, Severity: "info", Raw: map[string]any{"collector": "process_snapshot", "platform": "windows_cim", "image": row.ExecutablePath}}
+		ApplyProcessIdentity(&event, bootID)
+		out = append(out, event)
 	}
 	return out
 }

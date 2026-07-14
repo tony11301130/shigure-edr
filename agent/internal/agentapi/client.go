@@ -62,24 +62,33 @@ type EnrollmentResponse struct {
 }
 
 type NormalizedEvent struct {
-	Source          string         `json:"source"`
-	EventType       string         `json:"event_type"`
-	TenantID        string         `json:"tenant_id"`
-	SourceEventID   string         `json:"source_event_id,omitempty"`
-	Host            string         `json:"host,omitempty"`
-	IPAddress       string         `json:"ip_address,omitempty"`
-	User            string         `json:"user,omitempty"`
-	ProcessName     string         `json:"process_name,omitempty"`
-	ProcessID       string         `json:"process_id,omitempty"`
-	ParentProcessID string         `json:"parent_process_id,omitempty"`
-	CommandLine     string         `json:"command_line,omitempty"`
-	FilePath        string         `json:"file_path,omitempty"`
-	Domain          string         `json:"domain,omitempty"`
-	RemoteIP        string         `json:"remote_ip,omitempty"`
-	RemotePort      *int           `json:"remote_port,omitempty"`
-	Severity        string         `json:"severity"`
-	Mitre           []string       `json:"mitre,omitempty"`
-	Raw             map[string]any `json:"raw"`
+	Source                    string         `json:"source"`
+	EventType                 string         `json:"event_type"`
+	TenantID                  string         `json:"tenant_id"`
+	SourceEventID             string         `json:"source_event_id,omitempty"`
+	Host                      string         `json:"host,omitempty"`
+	IPAddress                 string         `json:"ip_address,omitempty"`
+	User                      string         `json:"user,omitempty"`
+	ProcessName               string         `json:"process_name,omitempty"`
+	ProcessID                 string         `json:"process_id,omitempty"`
+	ProcessEntityID           string         `json:"process_entity_id,omitempty"`
+	ParentProcessID           string         `json:"parent_process_id,omitempty"`
+	ParentProcessEntityID     string         `json:"parent_process_entity_id,omitempty"`
+	BootID                    string         `json:"boot_id,omitempty"`
+	ProcessCreateTime         string         `json:"process_create_time,omitempty"`
+	ProcessExitTime           string         `json:"process_exit_time,omitempty"`
+	ImagePath                 string         `json:"image_path,omitempty"`
+	ImageHash                 string         `json:"image_hash,omitempty"`
+	ProcessIdentityConfidence string         `json:"process_identity_confidence,omitempty"`
+	MissingParentReason       string         `json:"missing_parent_reason,omitempty"`
+	CommandLine               string         `json:"command_line,omitempty"`
+	FilePath                  string         `json:"file_path,omitempty"`
+	Domain                    string         `json:"domain,omitempty"`
+	RemoteIP                  string         `json:"remote_ip,omitempty"`
+	RemotePort                *int           `json:"remote_port,omitempty"`
+	Severity                  string         `json:"severity"`
+	Mitre                     []string       `json:"mitre,omitempty"`
+	Raw                       map[string]any `json:"raw"`
 }
 
 type AgentConfig struct {
