@@ -90,10 +90,12 @@ Stop-Service ShioriAgent
 - Events appear in `/api/v1/admin/events` and can be filtered by host, process, user, remote IP, domain, indicator, or SHA256.
 - Alerts appear for encoded PowerShell, suspicious script networking, Windows service/task event logs, and known IOC matches.
 - Read-only tasks can be queued only from the catalog; malformed args are rejected server-side.
-- Task results include `raw_ref` and `raw_hash` and can be fetched through raw evidence APIs.
+- Unknown, destructive, explicit-dispatch response, and local copy/staging tasks are recorded as `blocked_by_policy` and are not dispatched under `read_only_v1`.
+- Evidence collection tasks require explicit byte limits, reason, and case context.
+- Task results include policy metadata plus `raw_ref` and `raw_hash` and can be fetched through raw evidence APIs.
 - Cases can attach alerts, events, task results, and raw evidence references.
 - Saved hunts can be created, updated, disabled, executed, and reviewed.
 
 ## V1 safety boundaries
 
-Do not add or enable destructive response actions in V1: no host isolation, kill process, file delete/write, registry write/delete, reboot, or logoff. Tasking remains read-only investigation and evidence collection.
+Do not add or enable destructive response actions in V1: no host isolation, kill process, file delete/write, registry write/delete, service start/stop, reboot, or logoff. Tasking remains read-only investigation and bounded evidence collection. See `docs/adr/0002-read-only-response-boundary.md`.

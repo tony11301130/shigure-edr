@@ -10,20 +10,26 @@ import (
 
 var ErrBlocked = errors.New("blocked_by_policy")
 
+const PolicyVersion = "read_only_v1"
+
 type TaskMeta struct {
 	Risk        string
 	Destructive bool
+	Mutating    bool
 }
 
 var Catalog = map[string]TaskMeta{
 	"inventory": {Risk: "low"}, "process_list": {Risk: "low"}, "process_detail": {Risk: "low"}, "process_tree": {Risk: "low"}, "network_connections": {Risk: "low"}, "service_list": {Risk: "low"}, "scheduled_tasks": {Risk: "low"}, "windows_event_logs": {Risk: "low"}, "file_exists": {Risk: "low"}, "file_hash": {Risk: "low"},
-	"agent_identity": {Risk: "low"}, "autoruns_collect": {Risk: "low"}, "registry_query": {Risk: "low"}, "listening_ports": {Risk: "low"}, "list_directory": {Risk: "low"}, "read_file_chunk": {Risk: "medium"}, "copy_file": {Risk: "medium"}, "collect_file": {Risk: "medium"},
+	"agent_identity": {Risk: "low"}, "autoruns_collect": {Risk: "low"}, "registry_query": {Risk: "low"}, "listening_ports": {Risk: "low"}, "list_directory": {Risk: "low"}, "read_file_chunk": {Risk: "medium"}, "copy_file": {Risk: "medium", Mutating: true}, "collect_file": {Risk: "medium"},
 	"quarantine_file": {Risk: "high", Destructive: true}, "delete_file": {Risk: "high", Destructive: true}, "kill_process": {Risk: "high", Destructive: true}, "service_control": {Risk: "high", Destructive: true},
 }
 
 var Allowed = func() map[string]bool {
 	out := map[string]bool{}
-	for k := range Catalog {
+	for k, meta := range Catalog {
+		if meta.Destructive || meta.Mutating {
+			continue
+		}
 		out[k] = true
 	}
 	return out
@@ -32,7 +38,13 @@ var Allowed = func() map[string]bool {
 func Execute(taskType string, args map[string]any) (map[string]any, error) {
 	meta, ok := Catalog[taskType]
 	if !ok {
-		return map[string]any{"blocked": true, "reason": "task is not allowlisted", "task_type": taskType, "executed_at": time.Now().UTC().Format(time.RFC3339)}, ErrBlocked
+		return blockedResult(taskType, TaskMeta{Risk: "unknown"}, "task_not_allowlisted"), ErrBlocked
+	}
+	if meta.Destructive {
+		return blockedResult(taskType, meta, "destructive_task_blocked"), ErrBlocked
+	}
+	if meta.Mutating {
+		return blockedResult(taskType, meta, "mutating_task_blocked"), ErrBlocked
 	}
 	result, err := executeAllowed(taskType, args)
 	if result == nil {
@@ -41,8 +53,23 @@ func Execute(taskType string, args map[string]any) (map[string]any, error) {
 	result["task_type"] = taskType
 	result["risk"] = meta.Risk
 	result["destructive"] = meta.Destructive
+	result["policy_version"] = PolicyVersion
+	result["response_mode"] = "read_only"
 	result["executed_at"] = time.Now().UTC().Format(time.RFC3339)
 	return result, err
+}
+
+func blockedResult(taskType string, meta TaskMeta, reason string) map[string]any {
+	return map[string]any{
+		"blocked":        true,
+		"reason":         reason,
+		"task_type":      taskType,
+		"risk":           meta.Risk,
+		"destructive":    meta.Destructive,
+		"policy_version": PolicyVersion,
+		"response_mode":  "read_only",
+		"executed_at":    time.Now().UTC().Format(time.RFC3339),
+	}
 }
 
 func executeAllowed(taskType string, args map[string]any) (map[string]any, error) {

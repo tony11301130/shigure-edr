@@ -131,8 +131,10 @@ def test_production_task_policy_blocks_destructive_tasks(tmp_path):
     )
     catalog = client.get("/api/v1/admin/task-catalog", headers={"Authorization": "Bearer operator-admin-token"}).json()["tasks"]
 
-    assert blocked.status_code == 403
-    assert blocked.json()["detail"] == "blocked_by_production_task_policy"
+    assert blocked.status_code == 200
+    assert blocked.json()["status"] == "blocked_by_policy"
+    assert blocked.json()["error"] == "destructive_task_blocked"
+    assert blocked.json()["result"]["policy_version"] == "read_only_v1"
     assert allowed.status_code == 200, allowed.text
     assert "delete_file" not in {item["task_type"] for item in catalog}
     assert "copy_file" not in {item["task_type"] for item in catalog}

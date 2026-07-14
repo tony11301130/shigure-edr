@@ -47,10 +47,17 @@ func readFileChunk(args map[string]any) (map[string]any, error) {
 	if path == "" {
 		return nil, errors.New("path required")
 	}
+	reason, caseID, err := evidenceContext(args)
+	if err != nil {
+		return err.(blockedEvidence).Result, ErrBlocked
+	}
 	offset := int64(intArg(args, "offset", 0))
-	maxBytes := intArg(args, "max_bytes", 4096)
+	maxBytes, ok := explicitIntArg(args, "max_bytes")
+	if !ok {
+		return blockedEvidenceResult("read_file_chunk", "max_bytes_required"), ErrBlocked
+	}
 	if maxBytes <= 0 || maxBytes > 65536 {
-		maxBytes = 4096
+		return blockedEvidenceResult("read_file_chunk", "max_bytes_out_of_range"), ErrBlocked
 	}
 	f, err := os.Open(path)
 	if err != nil {
@@ -68,7 +75,8 @@ func readFileChunk(args map[string]any) (map[string]any, error) {
 		return nil, err
 	}
 	data := buf[:n]
-	return map[string]any{"path": path, "offset": offset, "bytes_read": n, "base64": base64.StdEncoding.EncodeToString(data), "text_preview": safePreview(data)}, nil
+	chunkHash := sha256.Sum256(data)
+	return map[string]any{"path": path, "offset": offset, "bytes_read": n, "base64": base64.StdEncoding.EncodeToString(data), "text_preview": safePreview(data), "sha256": hex.EncodeToString(chunkHash[:]), "reason": reason, "case_id": caseID, "policy_version": PolicyVersion}, nil
 }
 
 func copyFileTask(args map[string]any) (map[string]any, error) {
@@ -89,9 +97,16 @@ func collectFile(args map[string]any) (map[string]any, error) {
 	if path == "" {
 		return nil, errors.New("path required")
 	}
-	maxBytes := intArg(args, "max_bytes", 10*1024*1024)
+	reason, caseID, err := evidenceContext(args)
+	if err != nil {
+		return err.(blockedEvidence).Result, ErrBlocked
+	}
+	maxBytes, ok := explicitIntArg(args, "max_bytes")
+	if !ok {
+		return blockedEvidenceResult("collect_file", "max_bytes_required"), ErrBlocked
+	}
 	if maxBytes <= 0 || maxBytes > 10*1024*1024 {
-		maxBytes = 10 * 1024 * 1024
+		return blockedEvidenceResult("collect_file", "max_bytes_out_of_range"), ErrBlocked
 	}
 	info, err := os.Stat(path)
 	if err != nil {
@@ -101,7 +116,7 @@ func collectFile(args map[string]any) (map[string]any, error) {
 		return nil, errors.New("path is a directory")
 	}
 	if info.Size() > int64(maxBytes) {
-		return map[string]any{"path": path, "size": info.Size(), "max_bytes": maxBytes, "blocked": true, "reason": "file_too_large"}, ErrBlocked
+		return map[string]any{"path": path, "size": info.Size(), "max_bytes": maxBytes, "blocked": true, "reason": "file_too_large", "policy_version": PolicyVersion, "case_id": caseID}, ErrBlocked
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -110,18 +125,60 @@ func collectFile(args map[string]any) (map[string]any, error) {
 	h := sha256.Sum256(data)
 	sha := hex.EncodeToString(h[:])
 	return map[string]any{
-		"path":   path,
-		"size":   len(data),
-		"sha256": sha,
+		"path":           path,
+		"size":           len(data),
+		"sha256":         sha,
+		"reason":         reason,
+		"case_id":        caseID,
+		"policy_version": PolicyVersion,
 		"upload_file": map[string]any{
 			"kind":           "file",
 			"path":           path,
 			"sha256":         sha,
 			"size":           len(data),
 			"content_base64": base64.StdEncoding.EncodeToString(data),
-			"metadata":       map[string]any{"mod_time": info.ModTime().UTC().Format(time.RFC3339), "mode": info.Mode().String()},
+			"metadata":       map[string]any{"mod_time": info.ModTime().UTC().Format(time.RFC3339), "mode": info.Mode().String(), "reason": reason, "case_id": caseID, "policy_version": PolicyVersion},
 		},
 	}, nil
+}
+
+type blockedEvidence struct {
+	Result map[string]any
+}
+
+func (e blockedEvidence) Error() string {
+	if reason, _ := e.Result["reason"].(string); reason != "" {
+		return reason
+	}
+	return ErrBlocked.Error()
+}
+
+func evidenceContext(args map[string]any) (string, string, error) {
+	reason, _ := args["reason"].(string)
+	if strings.TrimSpace(reason) == "" {
+		return "", "", blockedEvidence{Result: blockedEvidenceResult("", "reason_required")}
+	}
+	caseID, _ := args["case_id"].(string)
+	if strings.TrimSpace(caseID) == "" {
+		return "", "", blockedEvidence{Result: blockedEvidenceResult("", "case_id_required")}
+	}
+	return reason, caseID, nil
+}
+
+func blockedEvidenceResult(taskType, reason string) map[string]any {
+	out := map[string]any{"blocked": true, "reason": reason, "policy_version": PolicyVersion, "response_mode": "read_only"}
+	if taskType != "" {
+		out["task_type"] = taskType
+	}
+	return out
+}
+
+func explicitIntArg(args map[string]any, key string) (int, bool) {
+	v, ok := args[key]
+	if !ok {
+		return 0, false
+	}
+	return intArg(map[string]any{key: v}, key, 0), true
 }
 
 func hashFile(path string) (string, error) {

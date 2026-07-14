@@ -6,7 +6,7 @@ import os
 import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
@@ -34,7 +34,7 @@ from open_edr_mdr_agent.api.models import (
     EvidenceUploadResponse,
 )
 from open_edr_mdr_agent.api.store import SQLiteStore
-from open_edr_mdr_agent.api.task_catalog import READONLY_TASK_CATALOG, TaskArgumentError, catalog_for_response_mode, get_task_definition, validate_task_args
+from open_edr_mdr_agent.api.task_catalog import READONLY_TASK_CATALOG, TaskArgumentError, catalog_for_response_mode, policy_audit, read_only_policy_block, validate_task_args
 from open_edr_mdr_agent.core.detection import detect_many
 from open_edr_mdr_agent.core.rules import load_rules
 from open_edr_mdr_agent.core.schemas import Alert, NormalizedEvent, Severity, Source
@@ -163,9 +163,13 @@ def create_app(
     @app.post("/api/v1/admin/tasks", response_model=TaskRecord)
     def create_task(req: TaskCreateRequest, _admin=Depends(_admin_auth)):
         try:
-            validate_task_args(req.task_type, req.args)
-            _validate_task_policy(app, req.task_type)
-            task_id = store.create_task(req.tenant_id, req.agent_id, req.task_type, req.args, req.timeout_seconds)
+            block = _task_policy_block(app, req.task_type)
+            if block:
+                block["requested_by"] = req.requested_by
+                task_id = store.create_blocked_task(req.tenant_id, req.agent_id, req.task_type, req.args, block["reason"], block)
+            else:
+                validate_task_args(req.task_type, req.args)
+                task_id = store.create_task(req.tenant_id, req.agent_id, req.task_type, req.args, req.timeout_seconds, policy_audit(req.task_type, req.args, req.requested_by))
         except TaskArgumentError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except ValueError as exc:
@@ -635,7 +639,7 @@ def _runtime_config(*, profile: str | None, admin_token: str | None, enrollment_
 
     return {
         "profile": resolved_profile,
-        "response_mode": "read_only" if resolved_profile == "production" else "dev",
+        "response_mode": "read_only",
         "admin_token": resolved_admin_token,
         "enrollment_token": resolved_enrollment_token,
         "server_trust": resolved_server_trust,
@@ -653,20 +657,14 @@ def _validate_deployment_server_url(app: FastAPI, server_url: str) -> None:
 
 def _task_catalog_for_runtime(app: FastAPI) -> list[dict]:
     runtime = getattr(app.state, "runtime_config", {})
-    if runtime.get("profile") == "production":
-        return catalog_for_response_mode("read_only")
-    return READONLY_TASK_CATALOG
+    return catalog_for_response_mode(runtime.get("response_mode", "read_only")) if runtime else READONLY_TASK_CATALOG
 
 
-def _validate_task_policy(app: FastAPI, task_type: str) -> None:
+def _task_policy_block(app: FastAPI, task_type: str) -> dict[str, Any] | None:
     runtime = getattr(app.state, "runtime_config", {})
-    if runtime.get("profile") != "production":
-        return
-    definition = get_task_definition(task_type)
-    if not definition:
-        return
-    if definition.destructive or definition.requires_explicit_dispatch or definition.task_type == "copy_file":
-        raise HTTPException(status_code=403, detail="blocked_by_production_task_policy")
+    if runtime.get("response_mode", "read_only") == "read_only":
+        return read_only_policy_block(task_type)
+    return None
 
 
 def _admin_auth(authorization: Annotated[Optional[str], Header()] = None, x_admin_token: Annotated[Optional[str], Header()] = None):

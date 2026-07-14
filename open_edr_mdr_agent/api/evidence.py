@@ -38,6 +38,12 @@ def build_raw_evidence(tenant_id: str, kind: str, object_id: str, payload: Mappi
 
 
 def build_agent_evidence(tenant_id: str, agent_id: str, req: Any) -> RawEvidenceRecord:
+    metadata = dict(req.metadata or {})
+    if req.kind == "file":
+        if not str(metadata.get("reason") or "").strip():
+            raise EvidenceError("evidence_reason_required")
+        if not str(metadata.get("case_id") or "").strip():
+            raise EvidenceError("evidence_case_id_required")
     declared_sha = str(req.sha256).lower()
     try:
         content = base64.b64decode(req.content_base64, validate=True)
@@ -55,7 +61,7 @@ def build_agent_evidence(tenant_id: str, agent_id: str, req: Any) -> RawEvidence
         "sha256": declared_sha,
         "size": req.size,
         "content_base64": req.content_base64,
-        "metadata": req.metadata,
+        "metadata": metadata,
     }
     object_id = f"{agent_id}:{req.kind}:{req.path or declared_sha}:{declared_sha[:16]}"
     return build_raw_evidence(tenant_id, f"agent_{req.kind}", object_id, payload, sha256=declared_sha)

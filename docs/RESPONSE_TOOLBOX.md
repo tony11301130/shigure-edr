@@ -2,7 +2,7 @@
 
 The endpoint agent is designed to run as a Windows Service. When installed from an elevated PowerShell prompt with the default `--install-service` path, Windows creates the service without an explicit `obj=` account, so the service runs as `LocalSystem`.
 
-This gives the agent enough local authority to perform EDR response work after the server explicitly queues a task. The agent does not autonomously execute high-risk response actions.
+This gives the agent enough local authority to collect investigation evidence after the server queues a task. Under the MVP `read_only_v1` policy, the agent does not execute high-risk or mutating response actions even if they are accidentally dispatched.
 
 ## Deploy as LocalSystem
 
@@ -71,7 +71,7 @@ Example:
 ## Medium-risk evidence tasks
 
 - `read_file_chunk` — bounded file read, returns base64 and a safe text preview.
-- `copy_file` — local endpoint copy for evidence preservation.
+- `collect_file` — upload a bounded file to server raw evidence storage.
 
 Example:
 
@@ -80,20 +80,28 @@ Example:
   "tenant_id": "default",
   "agent_id": "<agent-id>",
   "task_type": "read_file_chunk",
-  "args": {"path": "C:\\Windows\\System32\\drivers\\etc\\hosts", "offset": 0, "max_bytes": 4096}
+  "requested_by": "analyst@example.test",
+  "args": {
+    "path": "C:\\Windows\\System32\\drivers\\etc\\hosts",
+    "offset": 0,
+    "max_bytes": 4096,
+    "reason": "triage suspicious PowerShell alert",
+    "case_id": "case-123"
+  }
 }
 ```
 
 ## High-risk response tasks
 
-These are only executed when explicitly queued by an admin/API caller. They are marked `risk=high`, `destructive=true`, and `requires_explicit_dispatch=true` in the catalog and task result metadata.
+These are not MVP analyst actions. Under `read_only_v1`, the server records them as `blocked_by_policy` and the endpoint blocks them again before execution if they somehow arrive.
 
 - `quarantine_file`
 - `delete_file`
 - `kill_process`
 - `service_control` (`status`, `start`, `stop`)
+- `copy_file`
 
-`delete_file` requires a `confirm_sha256` argument. The agent hashes the target file immediately before deletion and blocks the task if the hash does not match.
+These prototype implementations are future capability stubs only. Enabling them requires a later policy/RBAC/audit/approval decision.
 
 Example:
 
@@ -105,6 +113,20 @@ Example:
   "args": {
     "path": "C:\\Temp\\bad.exe",
     "confirm_sha256": "<expected sha256>"
+  }
+}
+```
+
+Expected MVP result:
+
+```json
+{
+  "status": "blocked_by_policy",
+  "error": "destructive_task_blocked",
+  "result": {
+    "policy_version": "read_only_v1",
+    "response_mode": "read_only",
+    "task_type": "delete_file"
   }
 }
 ```
@@ -126,7 +148,6 @@ The agent does not expose arbitrary shell execution through these tasks.
 
 Additional explicit-dispatch investigation tasks:
 
-- `collect_file` — upload a bounded file to server raw evidence storage. The task result contains `evidence.raw_ref`, `evidence.sha256`, and `evidence.size`.
 - `process_detail` — return details for a PID. Linux returns `/proc` fields and executable hash when available. Windows returns fixed Win32_Process JSON from PowerShell/CIM.
 - `process_tree` — return the target PID plus direct children. Windows returns fixed Win32_Process JSON.
 - `autoruns_collect` — collect common persistence locations. Windows includes Run keys, startup folders, services, and scheduled tasks. Linux includes cron/systemd/profile locations.

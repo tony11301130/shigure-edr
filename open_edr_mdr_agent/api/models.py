@@ -77,6 +77,7 @@ class TaskCreateRequest(BaseModel):
     task_type: str
     args: Dict[str, Any] = Field(default_factory=dict)
     timeout_seconds: int = 300
+    requested_by: str = "admin_api"
 
 
 class TaskClaimRequest(BaseModel):

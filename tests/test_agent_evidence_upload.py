@@ -23,7 +23,7 @@ def test_agent_evidence_upload_is_raw_evidence_and_hash_searchable(tmp_path):
     upload = client.post(
         f"/api/v1/agents/{agent_id}/evidence",
         headers={"Authorization": f"Bearer {token}"},
-        json={"kind": "file", "path": "C:/Temp/evidence.txt", "sha256": sha, "size": len(data), "content_base64": base64.b64encode(data).decode(), "metadata": {"source": "test"}},
+        json={"kind": "file", "path": "C:/Temp/evidence.txt", "sha256": sha, "size": len(data), "content_base64": base64.b64encode(data).decode(), "metadata": {"source": "test", "reason": "triage", "case_id": "case-1"}},
     )
     assert upload.status_code == 200, upload.text
     raw_ref = upload.json()["raw_ref"]
@@ -44,7 +44,22 @@ def test_agent_evidence_upload_rejects_mismatched_hash(tmp_path):
     upload = client.post(
         f"/api/v1/agents/{agent_id}/evidence",
         headers={"Authorization": f"Bearer {token}"},
-        json={"kind": "file", "path": "C:/Temp/evidence.txt", "sha256": "0" * 64, "size": 5, "content_base64": base64.b64encode(b"hello").decode(), "metadata": {}},
+        json={"kind": "file", "path": "C:/Temp/evidence.txt", "sha256": "0" * 64, "size": 5, "content_base64": base64.b64encode(b"hello").decode(), "metadata": {"reason": "triage", "case_id": "case-1"}},
     )
     assert upload.status_code == 400
     assert upload.json()["detail"] == "evidence_sha256_mismatch"
+
+
+def test_agent_evidence_upload_requires_reason_and_case_context(tmp_path):
+    client, agent_id, token = _enrolled_client(tmp_path, "evidence-upload-audit.sqlite3")
+    data = b"hello evidence"
+    sha = hashlib.sha256(data).hexdigest()
+
+    upload = client.post(
+        f"/api/v1/agents/{agent_id}/evidence",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"kind": "file", "path": "C:/Temp/evidence.txt", "sha256": sha, "size": len(data), "content_base64": base64.b64encode(data).decode(), "metadata": {"reason": "triage"}},
+    )
+
+    assert upload.status_code == 400
+    assert upload.json()["detail"] == "evidence_case_id_required"

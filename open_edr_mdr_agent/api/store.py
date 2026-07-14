@@ -427,17 +427,31 @@ class SQLiteStore:
             )
         return len(rows)
 
-    def create_task(self, tenant_id: str, agent_id: str, task_type: str, args: Dict[str, Any], timeout_seconds: int) -> str:
+    def _ensure_task_agent(self, conn: sqlite3.Connection, tenant_id: str, agent_id: str) -> None:
+        agent = conn.execute("select tenant_id from agents where agent_id=?", (agent_id,)).fetchone()
+        if not agent:
+            raise ValueError("target_agent_not_found")
+        if agent["tenant_id"] != tenant_id:
+            raise ValueError("target_agent_tenant_mismatch")
+
+    def create_task(self, tenant_id: str, agent_id: str, task_type: str, args: Dict[str, Any], timeout_seconds: int, audit_result: Optional[Dict[str, Any]] = None) -> str:
         task_id = str(uuid4())
         with self.connect() as conn:
-            agent = conn.execute("select tenant_id from agents where agent_id=?", (agent_id,)).fetchone()
-            if not agent:
-                raise ValueError("target_agent_not_found")
-            if agent["tenant_id"] != tenant_id:
-                raise ValueError("target_agent_tenant_mismatch")
+            self._ensure_task_agent(conn, tenant_id, agent_id)
             conn.execute(
-                "insert into tasks(task_id, tenant_id, agent_id, task_type, args_json, status, created_at, timeout_seconds) values (?, ?, ?, ?, ?, 'queued', ?, ?)",
-                (task_id, tenant_id, agent_id, task_type, json.dumps(args), utc_now(), timeout_seconds),
+                "insert into tasks(task_id, tenant_id, agent_id, task_type, args_json, status, created_at, timeout_seconds, result_json) values (?, ?, ?, ?, ?, 'queued', ?, ?, ?)",
+                (task_id, tenant_id, agent_id, task_type, json.dumps(args), utc_now(), timeout_seconds, json.dumps(audit_result) if audit_result else None),
+            )
+        return task_id
+
+    def create_blocked_task(self, tenant_id: str, agent_id: str, task_type: str, args: Dict[str, Any], reason: str, result: Dict[str, Any]) -> str:
+        task_id = str(uuid4())
+        now = utc_now()
+        with self.connect() as conn:
+            self._ensure_task_agent(conn, tenant_id, agent_id)
+            conn.execute(
+                "insert into tasks(task_id, tenant_id, agent_id, task_type, args_json, status, created_at, completed_at, timeout_seconds, result_json, error) values (?, ?, ?, ?, ?, 'blocked_by_policy', ?, ?, 0, ?, ?)",
+                (task_id, tenant_id, agent_id, task_type, json.dumps(args), now, now, json.dumps(result), reason),
             )
         return task_id
 
@@ -453,7 +467,11 @@ class SQLiteStore:
         return [self._task_record({**dict(r), "status": "claimed", "claimed_at": now}) for r in rows]
 
     def complete_task(self, tenant_id: str, agent_id: str, task_id: str, status: str, result: Dict[str, Any], error: Optional[str]) -> None:
-        raw_payload = {"task_id": task_id, "agent_id": agent_id, "status": status, "result": result, "error": error}
+        with self.connect() as conn:
+            row = conn.execute("select result_json from tasks where tenant_id=? and agent_id=? and task_id=?", (tenant_id, agent_id, task_id)).fetchone()
+            existing_result = json.loads(row["result_json"] or "{}") if row else {}
+        merged_result = {**(result or {}), **existing_result}
+        raw_payload = {"task_id": task_id, "agent_id": agent_id, "status": status, "result": merged_result, "error": error}
         raw = build_raw_evidence(tenant_id, "task_result", task_id, raw_payload)
         with self.connect() as conn:
             conn.execute(
@@ -462,7 +480,7 @@ class SQLiteStore:
             )
             conn.execute(
                 "update tasks set status=?, completed_at=?, result_json=?, error=?, raw_ref=?, raw_hash=? where tenant_id=? and agent_id=? and task_id=?",
-                (status, utc_now(), json.dumps(result), error, raw.raw_ref, raw.sha256, tenant_id, agent_id, task_id),
+                (status, utc_now(), json.dumps(merged_result), error, raw.raw_ref, raw.sha256, tenant_id, agent_id, task_id),
             )
 
     def store_agent_evidence(self, tenant_id: str, agent_id: str, req: EvidenceUploadRequest) -> Dict[str, Any]:
@@ -503,7 +521,7 @@ class SQLiteStore:
     def retry_task(self, tenant_id: str, task_id: str) -> bool:
         with self.connect() as conn:
             cur = conn.execute(
-                "update tasks set status='queued', claimed_at=null, completed_at=null, error=null where tenant_id=? and task_id=? and status in ('failed','timed_out','cancelled','blocked_by_policy')",
+                "update tasks set status='queued', claimed_at=null, completed_at=null, error=null, result_json=null where tenant_id=? and task_id=? and status in ('failed','timed_out','cancelled')",
                 (tenant_id, task_id),
             )
         return cur.rowcount > 0

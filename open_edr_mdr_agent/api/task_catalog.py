@@ -8,6 +8,9 @@ class TaskArgumentError(ValueError):
     """Raised when a queued task does not match its catalog schema."""
 
 
+READ_ONLY_POLICY_VERSION = "read_only_v1"
+
+
 @dataclass(frozen=True)
 class ArgumentSpec:
     """Tiny schema vocabulary supported by endpoint task arguments."""
@@ -208,7 +211,7 @@ _TASK_CATALOG_SOURCE = [
         "platforms": ["windows", "linux"],
         "risk": "medium",
         "destructive": False,
-        "args_schema": {"path": {"type": "string", "required": True}, "offset": {"type": "integer", "minimum": 0, "maximum": 104857600, "default": 0}, "max_bytes": {"type": "integer", "minimum": 1, "maximum": 65536, "default": 4096}},
+        "args_schema": {"path": {"type": "string", "required": True}, "offset": {"type": "integer", "minimum": 0, "maximum": 104857600, "default": 0}, "max_bytes": {"type": "integer", "minimum": 1, "maximum": 65536, "required": True}, "reason": {"type": "string", "required": True}, "case_id": {"type": "string", "required": True}},
     },
     {
         "task_type": "copy_file",
@@ -271,7 +274,7 @@ _TASK_CATALOG_SOURCE = [
         "platforms": ["windows", "linux"],
         "risk": "medium",
         "destructive": False,
-        "args_schema": {"path": {"type": "string", "required": True}, "max_bytes": {"type": "integer", "minimum": 1, "maximum": 10485760, "default": 10485760}},
+        "args_schema": {"path": {"type": "string", "required": True}, "max_bytes": {"type": "integer", "minimum": 1, "maximum": 10485760, "required": True}, "reason": {"type": "string", "required": True}, "case_id": {"type": "string", "required": True}},
     },
     {
         "task_type": "quarantine_file",
@@ -317,7 +320,7 @@ _TASK_CATALOG_SOURCE = [
 
 TASK_CATALOG: tuple[TaskDefinition, ...] = tuple(TaskDefinition.from_dict(item) for item in _TASK_CATALOG_SOURCE)
 TASK_CATALOG_BY_TYPE: dict[str, TaskDefinition] = {item.task_type: item for item in TASK_CATALOG}
-READONLY_TASK_CATALOG: list[dict[str, Any]] = [item.as_dict() for item in TASK_CATALOG]
+READONLY_TASK_CATALOG: list[dict[str, Any]] = []
 
 
 def get_task_definition(task_type: str) -> TaskDefinition | None:
@@ -332,6 +335,44 @@ def catalog_for_response_mode(response_mode: str) -> list[dict[str, Any]]:
             if not item.destructive and item.risk in {"low", "medium"} and item.task_type != "copy_file"
         ]
     return [item.as_dict() for item in TASK_CATALOG]
+
+
+READONLY_TASK_CATALOG = catalog_for_response_mode("read_only")
+
+
+def read_only_policy_block(task_type: str) -> dict[str, Any] | None:
+    definition = get_task_definition(task_type)
+    base: dict[str, Any] = {
+        "blocked": True,
+        "policy_version": READ_ONLY_POLICY_VERSION,
+        "response_mode": "read_only",
+        "task_type": task_type,
+    }
+    if not definition:
+        return {**base, "reason": "task_not_allowlisted", "risk": "unknown", "destructive": False}
+    if definition.destructive:
+        return {**base, "reason": "destructive_task_blocked", "risk": definition.risk, "destructive": True}
+    if definition.requires_explicit_dispatch or definition.task_type == "copy_file":
+        return {**base, "reason": "mutating_task_blocked", "risk": definition.risk, "destructive": definition.destructive}
+    return None
+
+
+def policy_audit(task_type: str, args: Mapping[str, Any] | None = None, requested_by: str = "admin_api") -> dict[str, Any]:
+    definition = get_task_definition(task_type)
+    args = args or {}
+    out: dict[str, Any] = {
+        "policy_version": READ_ONLY_POLICY_VERSION,
+        "response_mode": "read_only",
+        "task_type": task_type,
+        "risk": definition.risk if definition else "unknown",
+        "destructive": definition.destructive if definition else False,
+        "requested_by": requested_by,
+    }
+    if "reason" in args:
+        out["reason"] = args["reason"]
+    if "case_id" in args:
+        out["case_id"] = args["case_id"]
+    return out
 
 
 def validate_task_args(task_type: str, args: Dict[str, Any]) -> None:

@@ -87,52 +87,52 @@ func TestDirectoryAndReadFileChunk(t *testing.T) {
 	if len(listed["entries"].([]map[string]any)) != 1 {
 		t.Fatalf("expected one entry, got %#v", listed)
 	}
-	chunk, err := Execute("read_file_chunk", map[string]any{"path": path, "offset": 6, "max_bytes": 5})
+	chunk, err := Execute("read_file_chunk", map[string]any{"path": path, "offset": 6, "max_bytes": 5, "reason": "triage", "case_id": "case-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if chunk["text_preview"] != "world" {
 		t.Fatalf("expected world preview, got %#v", chunk)
 	}
+	if chunk["sha256"] != "486ea46224d1bb4fb680f34f7c9ad96a8f24ec88be73ea8e5a6c65260e9cb8a7" {
+		t.Fatalf("expected chunk sha256, got %#v", chunk)
+	}
+	if chunk["reason"] != "triage" || chunk["case_id"] != "case-1" {
+		t.Fatalf("expected audit fields, got %#v", chunk)
+	}
 }
 
-func TestCopyQuarantineAndDeleteRequireHash(t *testing.T) {
+func TestDefaultReadOnlyPolicyBlocksMutatingPrototypeTasks(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src.txt")
 	copyPath := filepath.Join(dir, "evidence", "copy.txt")
 	if err := os.WriteFile(src, []byte("malware-ish"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	copied, err := Execute("copy_file", map[string]any{"source_path": src, "destination_path": copyPath})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if copied["bytes_copied"].(int64) == 0 {
-		t.Fatalf("expected copied bytes, got %#v", copied)
-	}
-	mismatch, err := Execute("delete_file", map[string]any{"path": copyPath, "confirm_sha256": "bad"})
-	if !errors.Is(err, ErrBlocked) {
-		t.Fatalf("expected hash mismatch block, got %v %#v", err, mismatch)
-	}
-	h, err := hashFile(copyPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	deleted, err := Execute("delete_file", map[string]any{"path": copyPath, "confirm_sha256": h})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if deleted["deleted"] != true {
-		t.Fatalf("expected deleted, got %#v", deleted)
-	}
-
-	quarantineDir := filepath.Join(dir, "quarantine")
-	moved, err := Execute("quarantine_file", map[string]any{"source_path": src, "quarantine_dir": quarantineDir})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if moved["moved"] != true {
-		t.Fatalf("expected moved, got %#v", moved)
+	for _, tc := range []struct {
+		name     string
+		taskType string
+		args     map[string]any
+		reason   string
+	}{
+		{name: "copy", taskType: "copy_file", args: map[string]any{"source_path": src, "destination_path": copyPath}, reason: "mutating_task_blocked"},
+		{name: "delete", taskType: "delete_file", args: map[string]any{"path": src, "confirm_sha256": "0"}, reason: "destructive_task_blocked"},
+		{name: "quarantine", taskType: "quarantine_file", args: map[string]any{"source_path": src, "quarantine_dir": filepath.Join(dir, "quarantine")}, reason: "destructive_task_blocked"},
+		{name: "kill", taskType: "kill_process", args: map[string]any{"pid": os.Getpid()}, reason: "destructive_task_blocked"},
+		{name: "service", taskType: "service_control", args: map[string]any{"service_name": "Spooler", "action": "stop"}, reason: "destructive_task_blocked"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := Execute(tc.taskType, tc.args)
+			if !errors.Is(err, ErrBlocked) {
+				t.Fatalf("expected ErrBlocked, got %v %#v", err, res)
+			}
+			if res["blocked"] != true || res["reason"] != tc.reason {
+				t.Fatalf("expected %s block, got %#v", tc.reason, res)
+			}
+			if res["policy_version"] != "read_only_v1" {
+				t.Fatalf("expected policy version, got %#v", res)
+			}
+		})
 	}
 }
 
@@ -142,16 +142,50 @@ func TestCollectFileProducesUploadPayload(t *testing.T) {
 	if err := os.WriteFile(path, []byte("endpoint evidence"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	res, err := Execute("collect_file", map[string]any{"path": path, "max_bytes": 1024})
+	res, err := Execute("collect_file", map[string]any{"path": path, "max_bytes": 1024, "reason": "triage", "case_id": "case-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res["sha256"] == "" || res["upload_file"] == nil {
 		t.Fatalf("expected upload payload, got %#v", res)
 	}
+	if res["reason"] != "triage" || res["case_id"] != "case-1" || res["policy_version"] != "read_only_v1" {
+		t.Fatalf("expected evidence audit fields, got %#v", res)
+	}
 	upload := res["upload_file"].(map[string]any)
 	if upload["content_base64"] == "" || upload["path"] != path {
 		t.Fatalf("bad upload payload %#v", upload)
+	}
+	metadata := upload["metadata"].(map[string]any)
+	if metadata["reason"] != "triage" || metadata["case_id"] != "case-1" {
+		t.Fatalf("missing audit metadata %#v", metadata)
+	}
+}
+
+func TestEvidenceCollectionRequiresReasonAndExplicitLimits(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "evidence.txt")
+	if err := os.WriteFile(path, []byte("endpoint evidence"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name     string
+		taskType string
+		args     map[string]any
+		reason   string
+	}{
+		{name: "chunk missing limit", taskType: "read_file_chunk", args: map[string]any{"path": path, "reason": "triage", "case_id": "case-1"}, reason: "max_bytes_required"},
+		{name: "chunk missing reason", taskType: "read_file_chunk", args: map[string]any{"path": path, "offset": 0, "max_bytes": 16, "case_id": "case-1"}, reason: "reason_required"},
+		{name: "collect missing reason", taskType: "collect_file", args: map[string]any{"path": path, "max_bytes": 1024, "case_id": "case-1"}, reason: "reason_required"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := Execute(tc.taskType, tc.args)
+			if !errors.Is(err, ErrBlocked) {
+				t.Fatalf("expected ErrBlocked, got %v %#v", err, res)
+			}
+			if res["reason"] != tc.reason {
+				t.Fatalf("expected reason %q, got %#v", tc.reason, res)
+			}
+		})
 	}
 }
 
