@@ -57,11 +57,9 @@ func platformProcessSnapshot(tenantID string, max int) []agentapi.NormalizedEven
 	}
 	out := []agentapi.NormalizedEvent{}
 	for _, row := range rows {
-		event := agentapi.NormalizedEvent{Source: "internal", EventType: "process_start", TenantID: tenantID, Host: inv.Host, ProcessName: firstNonEmpty(row.ExecutablePath, row.Name), ProcessID: strconv.Itoa(row.ProcessID), ParentProcessID: strconv.Itoa(row.ParentProcessID), ProcessCreateTime: row.CreationDate, ImagePath: row.ExecutablePath, CommandLine: row.CommandLine, Severity: "info", Raw: map[string]any{"collector": "process_snapshot", "platform": "windows_cim", "image": row.ExecutablePath}}
-		ApplyProcessIdentity(&event, bootID)
-		out = append(out, event)
+		out = append(out, agentapi.NormalizedEvent{Source: "internal", EventType: "process_start", TenantID: tenantID, Host: inv.Host, ProcessName: firstNonEmpty(row.ExecutablePath, row.Name), ProcessID: strconv.Itoa(row.ProcessID), ParentProcessID: strconv.Itoa(row.ParentProcessID), ProcessCreateTime: row.CreationDate, ImagePath: row.ExecutablePath, CommandLine: row.CommandLine, Severity: "info", Raw: map[string]any{"collector": "process_snapshot", "platform": "windows_cim", "image": row.ExecutablePath}})
 	}
-	return out
+	return observeProcessSnapshotEvents(tenantID, bootID, out)
 }
 
 func platformNetworkSnapshot(tenantID string, max int) []agentapi.NormalizedEvent {

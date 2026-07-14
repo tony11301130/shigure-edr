@@ -358,6 +358,7 @@ func agentHealth(spoolPath string, spoolLimits spool.Limits) map[string]any {
 		"spool_path":        spoolPath,
 		"spool_bytes":       spoolSize,
 		"spool":             spoolHealth(spoolSummary),
+		"process_tracker":   collect.ProcessTrackerHealth(),
 		"task_capabilities": len(tasks.Allowed),
 	}
 }

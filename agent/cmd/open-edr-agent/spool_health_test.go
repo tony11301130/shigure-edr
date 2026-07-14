@@ -81,4 +81,9 @@ func TestRunCycleReportsBoundedSpoolHealthInHeartbeat(t *testing.T) {
 	if _, ok := spoolHealth["blocked_records"]; !ok {
 		t.Fatalf("expected blocked counter field, got %+v", spoolHealth)
 	}
+	if processTracker, ok := heartbeatHealth["process_tracker"].(map[string]any); !ok {
+		t.Fatalf("expected process tracker health in heartbeat, got %+v", heartbeatHealth)
+	} else if _, ok := processTracker["active_processes"]; !ok {
+		t.Fatalf("expected process tracker active count, got %+v", processTracker)
+	}
 }

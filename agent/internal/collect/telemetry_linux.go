@@ -31,14 +31,12 @@ func platformProcessSnapshot(tenantID string, max int) []agentapi.NormalizedEven
 		stat, _ := os.ReadFile(filepath.Join("/proc", e.Name(), "stat"))
 		imagePath, _ := os.Readlink(filepath.Join("/proc", e.Name(), "exe"))
 		ppid := parsePPID(string(stat))
-		event := agentapi.NormalizedEvent{Source: "internal", EventType: "process_start", TenantID: tenantID, Host: inv.Host, ProcessName: strings.TrimSpace(string(comm)), ProcessID: strconv.Itoa(pid), ParentProcessID: ppid, ProcessCreateTime: parseStartTime(string(stat)), ImagePath: imagePath, CommandLine: strings.TrimSpace(strings.ReplaceAll(string(cmd), "\x00", " ")), Severity: "info", Raw: map[string]any{"collector": "process_snapshot", "platform": "linux_proc", "image": imagePath}}
-		ApplyProcessIdentity(&event, bootID)
-		out = append(out, event)
+		out = append(out, agentapi.NormalizedEvent{Source: "internal", EventType: "process_start", TenantID: tenantID, Host: inv.Host, ProcessName: strings.TrimSpace(string(comm)), ProcessID: strconv.Itoa(pid), ParentProcessID: ppid, ProcessCreateTime: parseStartTime(string(stat)), ImagePath: imagePath, CommandLine: strings.TrimSpace(strings.ReplaceAll(string(cmd), "\x00", " ")), Severity: "info", Raw: map[string]any{"collector": "process_snapshot", "platform": "linux_proc", "image": imagePath}})
 		if len(out) >= max {
 			break
 		}
 	}
-	return out
+	return observeProcessSnapshotEvents(tenantID, bootID, out)
 }
 
 func platformNetworkSnapshot(tenantID string, max int) []agentapi.NormalizedEvent {
