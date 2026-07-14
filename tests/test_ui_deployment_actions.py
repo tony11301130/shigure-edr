@@ -68,6 +68,8 @@ def test_agent_package_zip_contains_binary_config_and_installer(tmp_path, monkey
         assert config["data_dir"] == "C:\\ProgramData\\Shiori"
         assert config["identity_file"] == "C:\\ProgramData\\Shiori\\shiori-agent-state.json"
         assert config["spool_file"] == "C:\\ProgramData\\Shiori\\spool.jsonl"
+        assert config["spool_max_bytes"] == 52428800
+        assert config["spool_max_records"] == 10000
         assert "per-endpoint credential" in config["enrollment_model"]["stage_2"]
         install_ps1 = zf.read("install.ps1").decode()
         assert "--enroll-token" not in install_ps1

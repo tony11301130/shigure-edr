@@ -22,6 +22,8 @@ import (
 
 const version = "0.1.0-dev"
 
+var defaultSpoolLimits = spool.Limits{MaxBytes: 50 * 1024 * 1024, MaxRecords: 10000}
+
 type agentOptions struct {
 	Profile           string
 	ConfigPath        string
@@ -30,6 +32,8 @@ type agentOptions struct {
 	ServerTrust       string
 	StatePath         string
 	SpoolPath         string
+	SpoolMaxBytes     int64
+	SpoolMaxRecords   int
 	Once              bool
 	DemoEvent         bool
 	CollectSnapshot   bool
@@ -45,6 +49,8 @@ func main() {
 	serverTrust := flag.String("server-trust", "", "server trust mode or CA bundle path for production profile")
 	statePath := flag.String("state", defaultStatePath(), "agent state path")
 	spoolPath := flag.String("spool", defaultSpoolPath(), "offline spool JSONL path")
+	spoolMaxBytes := flag.Int64("spool-max-bytes", defaultSpoolLimits.MaxBytes, "maximum offline spool bytes before oldest records are dropped")
+	spoolMaxRecords := flag.Int("spool-max-records", defaultSpoolLimits.MaxRecords, "maximum offline spool records before oldest records are dropped")
 	once := flag.Bool("once", false, "run one heartbeat/telemetry/task cycle then exit")
 	demoEvent := flag.Bool("demo-suspicious-event", false, "send a demo suspicious PowerShell event for detection smoke test")
 	collectSnapshot := flag.Bool("collect-snapshot", true, "send limited process/network telemetry snapshot each cycle")
@@ -57,7 +63,7 @@ func main() {
 	installDir := flag.String("install-dir", defaultInstallDir(), "Windows service binary install directory")
 	flag.Parse()
 
-	opts := agentOptions{Profile: *profile, ConfigPath: *configPath, Server: *server, EnrollToken: *enrollToken, ServerTrust: *serverTrust, StatePath: *statePath, SpoolPath: *spoolPath, Once: *once, DemoEvent: *demoEvent, CollectSnapshot: *collectSnapshot, MaxSnapshotEvents: *maxSnapshotEvents, Interval: *interval}
+	opts := agentOptions{Profile: *profile, ConfigPath: *configPath, Server: *server, EnrollToken: *enrollToken, ServerTrust: *serverTrust, StatePath: *statePath, SpoolPath: *spoolPath, SpoolMaxBytes: *spoolMaxBytes, SpoolMaxRecords: *spoolMaxRecords, Once: *once, DemoEvent: *demoEvent, CollectSnapshot: *collectSnapshot, MaxSnapshotEvents: *maxSnapshotEvents, Interval: *interval}
 	if err := applyConfigFile(&opts); err != nil {
 		log.Fatalf("load config failed: %v", err)
 	}
@@ -129,6 +135,8 @@ type bootstrapConfig struct {
 	ServerURL       string `json:"server_url"`
 	EnrollmentToken string `json:"enrollment_token"`
 	ServerTrust     string `json:"server_trust"`
+	SpoolMaxBytes   int64  `json:"spool_max_bytes"`
+	SpoolMaxRecords int    `json:"spool_max_records"`
 }
 
 func applyConfigFile(opts *agentOptions) error {
@@ -152,6 +160,12 @@ func applyConfigFile(opts *agentOptions) error {
 	opts.EnrollToken = cfg.EnrollmentToken
 	if cfg.ServerTrust != "" {
 		opts.ServerTrust = cfg.ServerTrust
+	}
+	if cfg.SpoolMaxBytes > 0 {
+		opts.SpoolMaxBytes = cfg.SpoolMaxBytes
+	}
+	if cfg.SpoolMaxRecords > 0 {
+		opts.SpoolMaxRecords = cfg.SpoolMaxRecords
 	}
 	return nil
 }
@@ -191,6 +205,12 @@ func serviceRuntimeArgs(opts agentOptions) []string {
 		}
 	}
 	args = append(args, "--state", opts.StatePath, "--spool", opts.SpoolPath)
+	if opts.SpoolMaxBytes > 0 {
+		args = append(args, "--spool-max-bytes", fmt.Sprintf("%d", opts.SpoolMaxBytes))
+	}
+	if opts.SpoolMaxRecords > 0 {
+		args = append(args, "--spool-max-records", fmt.Sprintf("%d", opts.SpoolMaxRecords))
+	}
 	return args
 }
 
@@ -216,8 +236,9 @@ func runAgent(opts agentOptions, stop <-chan struct{}) error {
 	}
 
 	runtimeConfig := agentapi.AgentConfig{TaskPollSeconds: int(opts.Interval.Seconds()), HeartbeatSeconds: int(opts.Interval.Seconds()), UploadIntervalSeconds: int(opts.Interval.Seconds()), MaxSnapshotEvents: opts.MaxSnapshotEvents, CollectSnapshot: opts.CollectSnapshot, CollectProcessSnapshot: true, CollectNetworkSnapshot: true, CollectWindowsEventLogs: true, DemoSuspiciousEvent: opts.DemoEvent}
+	spoolLimits := opts.spoolLimits()
 	for {
-		newConfig, err := runCycle(client, agentState, opts.StatePath, opts.SpoolPath, runtimeConfig)
+		newConfig, err := runCycle(client, agentState, opts.StatePath, opts.SpoolPath, spoolLimits, runtimeConfig)
 		if err != nil {
 			log.Printf("cycle error: %v", err)
 		}
@@ -240,6 +261,17 @@ func runAgent(opts agentOptions, stop <-chan struct{}) error {
 	}
 }
 
+func (opts agentOptions) spoolLimits() spool.Limits {
+	limits := defaultSpoolLimits
+	if opts.SpoolMaxBytes > 0 {
+		limits.MaxBytes = opts.SpoolMaxBytes
+	}
+	if opts.SpoolMaxRecords > 0 {
+		limits.MaxRecords = opts.SpoolMaxRecords
+	}
+	return limits
+}
+
 func enroll(client *agentapi.Client, token string) (*state.State, error) {
 	inv := collect.HostInventory()
 	res, err := client.Enroll(agentapi.EnrollmentRequest{
@@ -252,14 +284,14 @@ func enroll(client *agentapi.Client, token string) (*state.State, error) {
 	return &state.State{TenantID: res.TenantID, AgentID: res.AgentID, AgentToken: res.AgentToken, CredentialVersion: res.CredentialVersion}, nil
 }
 
-func runCycle(client *agentapi.Client, s *state.State, statePath string, spoolPath string, cfg agentapi.AgentConfig) (*agentapi.AgentConfig, error) {
-	if err := spool.Flush(spoolPath, client, s); err != nil {
+func runCycle(client *agentapi.Client, s *state.State, statePath string, spoolPath string, spoolLimits spool.Limits, cfg agentapi.AgentConfig) (*agentapi.AgentConfig, error) {
+	if _, err := spool.FlushBounded(spoolPath, client, s, spoolLimits); err != nil {
 		log.Printf("spool flush failed: %v", err)
 	}
 	inv := collect.HostInventory()
 	heartbeat, err := client.Heartbeat(s.AgentID, s.AgentToken, map[string]any{
 		"host": inv.Host, "ip_address": inv.IPAddress, "os": inv.OS, "agent_version": version,
-		"health": agentHealth(spoolPath),
+		"health": agentHealth(spoolPath, spoolLimits),
 	})
 	if err != nil {
 		log.Printf("heartbeat failed, continuing so telemetry can spool if needed: %v", err)
@@ -284,7 +316,7 @@ func runCycle(client *agentapi.Client, s *state.State, statePath string, spoolPa
 	}
 	if len(events) > 0 {
 		if err := client.IngestEvents(s.AgentID, s.AgentToken, events); err != nil {
-			if spoolErr := spool.AppendEvents(spoolPath, events); spoolErr != nil {
+			if _, spoolErr := spool.AppendEventsBounded(spoolPath, events, spoolLimits); spoolErr != nil {
 				return heartbeatConfig(heartbeat), fmt.Errorf("ingest events: %w; spool failed: %v", err, spoolErr)
 			}
 			log.Printf("ingest failed, events spooled: %v", err)
@@ -296,7 +328,7 @@ func runCycle(client *agentapi.Client, s *state.State, statePath string, spoolPa
 		return heartbeatConfig(heartbeat), fmt.Errorf("claim tasks: %w", err)
 	}
 	for _, task := range claimed {
-		executeAndReport(client, s, spoolPath, task)
+		executeAndReport(client, s, spoolPath, spoolLimits, task)
 	}
 	return heartbeatConfig(heartbeat), nil
 }
@@ -308,10 +340,14 @@ func heartbeatConfig(h *agentapi.HeartbeatResponse) *agentapi.AgentConfig {
 	return &h.Config
 }
 
-func agentHealth(spoolPath string) map[string]any {
+func agentHealth(spoolPath string, spoolLimits spool.Limits) map[string]any {
 	spoolSize := int64(0)
 	if info, err := os.Stat(spoolPath); err == nil {
 		spoolSize = info.Size()
+	}
+	spoolSummary, err := spool.Summary(spoolPath, spoolLimits)
+	if err != nil {
+		spoolSummary = spool.SpoolSummary{Bytes: spoolSize, PressureState: "unknown"}
 	}
 	return map[string]any{
 		"status":            "ok",
@@ -321,7 +357,25 @@ func agentHealth(spoolPath string) map[string]any {
 		"runtime_arch":      runtime.GOARCH,
 		"spool_path":        spoolPath,
 		"spool_bytes":       spoolSize,
+		"spool":             spoolHealth(spoolSummary),
 		"task_capabilities": len(tasks.Allowed),
+	}
+}
+
+func spoolHealth(summary spool.SpoolSummary) map[string]any {
+	return map[string]any{
+		"bytes":                     summary.Bytes,
+		"records":                   summary.Records,
+		"pressure_state":            summary.PressureState,
+		"accepted_records":          summary.AcceptedRecords,
+		"dropped_records":           summary.DroppedRecords,
+		"blocked_records":           summary.BlockedRecords,
+		"uploaded_records":          summary.UploadedRecords,
+		"replayed_records":          summary.ReplayedRecords,
+		"retried_records":           summary.RetriedRecords,
+		"oldest_record_age_seconds": summary.OldestRecordAgeSeconds,
+		"last_successful_upload_at": summary.LastSuccessfulUploadAt,
+		"upload_lag_seconds":        summary.UploadLagSeconds,
 	}
 }
 
@@ -344,7 +398,7 @@ func mergeCLIOverrides(cfg agentapi.AgentConfig, forceDemo bool, fallbackMaxSnap
 	return cfg
 }
 
-func executeAndReport(client *agentapi.Client, s *state.State, spoolPath string, task agentapi.Task) {
+func executeAndReport(client *agentapi.Client, s *state.State, spoolPath string, spoolLimits spool.Limits, task agentapi.Task) {
 	result, err := tasks.Execute(task.TaskType, task.Args)
 	if err == nil {
 		if upload, ok := result["upload_file"].(map[string]any); ok {
@@ -368,7 +422,7 @@ func executeAndReport(client *agentapi.Client, s *state.State, spoolPath string,
 		msg = err.Error()
 	}
 	if sendErr := client.SendTaskResult(s.AgentID, s.AgentToken, task.TaskID, status, result, msg); sendErr != nil {
-		if spoolErr := spool.AppendTaskResult(spoolPath, task.TaskID, status, result, msg); spoolErr != nil {
+		if _, spoolErr := spool.AppendTaskResultBounded(spoolPath, task.TaskID, status, result, msg, spoolLimits); spoolErr != nil {
 			log.Printf("task result upload failed task_id=%s: %v; spool failed: %v", task.TaskID, sendErr, spoolErr)
 			return
 		}

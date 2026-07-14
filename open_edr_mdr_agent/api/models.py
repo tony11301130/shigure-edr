@@ -136,5 +136,6 @@ class AgentRecord(BaseModel):
     credential_status: str = "active"
     credential_revoked_at: Optional[datetime] = None
     credential_rotated_at: Optional[datetime] = None
+    health: Dict[str, Any] = Field(default_factory=dict)
     enrolled_at: datetime
     last_seen: Optional[datetime] = None

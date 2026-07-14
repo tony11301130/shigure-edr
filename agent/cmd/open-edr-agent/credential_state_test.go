@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"open-edr-mdr-agent/agent/internal/agentapi"
+	"open-edr-mdr-agent/agent/internal/spool"
 	"open-edr-mdr-agent/agent/internal/state"
 )
 
@@ -91,7 +92,7 @@ func TestRunCycleAppliesCredentialUpdateFromHeartbeat(t *testing.T) {
 		t.Fatalf("save initial state: %v", err)
 	}
 
-	_, err := runCycle(agentapi.New(server.URL), s, statePath, spoolPath, agentapi.AgentConfig{CollectSnapshot: false, MaxSnapshotEvents: 25})
+	_, err := runCycle(agentapi.New(server.URL), s, statePath, spoolPath, spool.Limits{}, agentapi.AgentConfig{CollectSnapshot: false, MaxSnapshotEvents: 25})
 	if err != nil {
 		t.Fatalf("run cycle: %v", err)
 	}

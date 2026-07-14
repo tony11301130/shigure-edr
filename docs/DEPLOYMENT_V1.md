@@ -75,6 +75,14 @@ Stop-Service ShioriAgent
 - If local state is lost or corrupt, recover by revoking the old agent credential, placing a fresh short-lived or max-use enrollment token into the agent config, and enrolling the endpoint again. Do not restore the originally used bootstrap token.
 - Credential lifecycle events distinguish `enrolled`, `authenticated`, `rotation_scheduled`, `rotated`, and `revoked` for operator audit and troubleshooting.
 
+## Bounded local spool
+
+- The local spool is bounded by `spool_max_bytes` and `spool_max_records` in the agent config. The current deployment package defaults to 50 MiB and 10,000 records.
+- When the spool exceeds either limit, the agent drops the oldest queued records first and keeps newer telemetry or task results. This favors recent investigation context during long outages.
+- The agent persists spool counters next to the JSONL spool and reports them in heartbeat health under `spool`: queued bytes/records, pressure state, accepted records, dropped records, blocked records, uploaded records, replayed records, retried records, oldest queued record age, last successful upload time, and upload lag.
+- Operators should treat `pressure_state=pressure` or increasing `dropped_records` as data-loss risk: restore backend connectivity, validate endpoint disk health, and consider collecting targeted evidence from the endpoint after recovery.
+- Dropped records are not silently recoverable from the agent spool. Alerts, cases, and evidence packages should mention the telemetry gap when spool pressure occurred during the investigated time window.
+
 ## Analyst validation checklist
 
 - Enrolled endpoint appears in `/api/v1/admin/agents` and `/ui`.

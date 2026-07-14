@@ -22,7 +22,7 @@ func validProductionOptions() agentOptions {
 
 func TestApplyConfigFileLoadsEnrollmentMaterial(t *testing.T) {
 	path := t.TempDir() + "/agent-config.json"
-	if err := os.WriteFile(path, []byte(`{"profile":"production","server_url":"https://edr.intra","enrollment_token":"tenant-bootstrap-token","server_trust":"system"}`), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"profile":"production","server_url":"https://edr.intra","enrollment_token":"tenant-bootstrap-token","server_trust":"system","spool_max_bytes":1048576,"spool_max_records":500}`), 0600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 	opts := agentOptions{ConfigPath: path}
@@ -32,6 +32,9 @@ func TestApplyConfigFileLoadsEnrollmentMaterial(t *testing.T) {
 	}
 	if opts.Profile != "production" || opts.Server != "https://edr.intra" || opts.EnrollToken != "tenant-bootstrap-token" || opts.ServerTrust != "system" {
 		t.Fatalf("config was not applied: %+v", opts)
+	}
+	if opts.SpoolMaxBytes != 1048576 || opts.SpoolMaxRecords != 500 {
+		t.Fatalf("spool limits were not applied: %+v", opts)
 	}
 	if err := validateAgentOptions(opts); err != nil {
 		t.Fatalf("expected config-backed production options to validate: %v", err)

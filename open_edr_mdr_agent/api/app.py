@@ -483,6 +483,8 @@ def create_app(
             "data_dir": "C:\\ProgramData\\Shiori",
             "identity_file": "C:\\ProgramData\\Shiori\\shiori-agent-state.json",
             "spool_file": "C:\\ProgramData\\Shiori\\spool.jsonl",
+            "spool_max_bytes": 52428800,
+            "spool_max_records": 10000,
             "installed_config_file": "C:\\ProgramData\\Shiori\\shiori-agent-config.json",
             "install_command": ".\\shiori-agent.exe --install-service --config C:\\ProgramData\\Shiori\\shiori-agent-config.json",
             "package_install_command": ".\\install.ps1",
@@ -556,6 +558,7 @@ Enrollment model:
 4. The shared enrollment token should not be used as the long-term endpoint identity.
 5. install.ps1 copies the bootstrap config to C:\ProgramData\Shiori and installs the service with --config, so the service command line does not contain the enrollment token.
 6. After the first successful enrollment, the agent removes enrollment_token from the installed config file; recovery should use a fresh enrollment token.
+7. The local spool is bounded by spool_max_bytes and spool_max_records. Under pressure, oldest queued records are dropped first and the heartbeat reports spool pressure/drop counters.
 
 Run from elevated PowerShell:
   Set-ExecutionPolicy -Scope Process Bypass

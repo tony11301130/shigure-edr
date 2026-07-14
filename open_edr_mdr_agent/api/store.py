@@ -926,6 +926,8 @@ class SQLiteStore:
     def _agent_record(self, row: Dict[str, Any]) -> Dict[str, Any]:
         row.pop("agent_token", None)
         row.pop("pending_agent_token", None)
+        metadata = json.loads(row.pop("metadata_json", "{}") or "{}")
+        row["health"] = metadata.get("health", {})
         row["credential_version"] = int(row.get("credential_version") or 1)
         if row.get("credential_revoked_at"):
             row["credential_status"] = "revoked"
