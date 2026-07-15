@@ -1,0 +1,23 @@
+{
+  "events": [
+    {
+      "source": "internal",
+      "event_type": "network_connection",
+      "tenant_id": "client-spoofed",
+      "host": "CH01",
+      "timestamp": "2026-07-15T01:02:03+00:00",
+      "process_name": "powershell.exe",
+      "process_id": "4242",
+      "process_entity_id": "peid:CH01:boot-a:4242:2026-07-15T00:00:00Z",
+      "command_line": "powershell.exe -enc SQBFAFgA",
+      "user": "CORP\\alice",
+      "hash_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "remote_ip": "203.0.113.77",
+      "remote_port": 443,
+      "severity": "info",
+      "raw": {
+        "projection": "clickhouse-test"
+      }
+    }
+  ]
+}

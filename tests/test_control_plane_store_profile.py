@@ -14,6 +14,10 @@ def test_admin_storage_profile_reports_sqlite_dev_control_plane(tmp_path):
     assert res.json() == {
         "profile": "dev",
         "control_plane_store": "sqlite",
+        "telemetry_projection": {
+            "storage_provider": "sqlite",
+            "retention": {},
+        },
         "raw_object_store": {
             "storage_provider": "local",
             "bucket": "raw-evidence",

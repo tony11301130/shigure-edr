@@ -83,5 +83,5 @@ runs a production-profile vertical slice through public APIs:
   profiles.
 - PostgreSQL is now the source of truth for workflow/control-plane metadata in
   production profile.
-- ClickHouse integration remains a separate ticket; until then, normalized event
-  rows can still pass through the shared store contract for API compatibility.
+- ClickHouse telemetry projection is covered separately by ADR 0008; PostgreSQL
+  remains focused on workflow/control-plane metadata.

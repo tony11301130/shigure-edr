@@ -23,6 +23,7 @@ from open_edr_mdr_agent.api.cases import (
 )
 from open_edr_mdr_agent.api.evidence import EvidenceError
 from open_edr_mdr_agent.api.hunts import HuntCreateRequest, HuntRecord, HuntRunRecord, HuntUpdateRequest
+from open_edr_mdr_agent.api.clickhouse_store import ClickHouseTelemetryStore
 from open_edr_mdr_agent.api.models import (
     AgentConfig,
     AgentRecord,
@@ -55,6 +56,8 @@ DEFAULT_PROFILE = os.environ.get("OPEN_EDR_MDR_PROFILE")
 DEFAULT_SERVER_TRUST = os.environ.get("OPEN_EDR_MDR_SERVER_TRUST")
 DEFAULT_CONTROL_PLANE_STORE = os.environ.get("OPEN_EDR_MDR_CONTROL_PLANE_STORE")
 DEFAULT_POSTGRES_DSN = os.environ.get("OPEN_EDR_MDR_POSTGRES_DSN")
+DEFAULT_TELEMETRY_PROJECTION = os.environ.get("OPEN_EDR_MDR_TELEMETRY_PROJECTION")
+DEFAULT_CLICKHOUSE_DSN = os.environ.get("OPEN_EDR_MDR_CLICKHOUSE_DSN")
 
 PROFILES = {"dev", "demo", "production"}
 DEV_ADMIN_TOKENS = {"", "dev-admin-token", "admin", "changeme", "change-me"}
@@ -70,6 +73,7 @@ def create_app(
     enrollment_token: str | None = None,
     server_trust: str | None = None,
     store: SQLiteStore | None = None,
+    telemetry_store: Any | None = None,
 ) -> FastAPI:
     runtime = _runtime_config(profile=profile, admin_token=admin_token, enrollment_token=enrollment_token, server_trust=server_trust)
     app = FastAPI(title="Shiori API", version="0.1.0")
@@ -82,7 +86,13 @@ def create_app(
             raise ValueError("production_create_dev_token_disabled")
     store = store or _store_for_runtime(db_path, runtime)
     app.state.store = store
-    app.state.runtime_config = {**runtime, "control_plane_store": getattr(store, "storage_profile", runtime["control_plane_store"])}
+    telemetry_store = telemetry_store or _telemetry_store_for_runtime(store, runtime)
+    app.state.telemetry_store = telemetry_store
+    app.state.runtime_config = {
+        **runtime,
+        "control_plane_store": getattr(store, "storage_profile", runtime["control_plane_store"]),
+        "telemetry_projection": getattr(telemetry_store, "storage_profile", runtime["telemetry_projection"]),
+    }
     if create_dev_token:
         store.create_enrollment_token("default", token=runtime["enrollment_token"], max_uses=None)
 
@@ -136,6 +146,8 @@ def create_app(
                 event.host = agent["host"]
             normalized.append(event)
         accepted = store.insert_events(agent["agent_id"], normalized)
+        if app.state.telemetry_store is not store:
+            app.state.telemetry_store.insert_events(agent["agent_id"], normalized)
         alerts = detect_many(normalized, custom_rules=app.state.custom_rules)
         # Ensure generated alerts are tenant-scoped through raw metadata.
         for alert in alerts:
@@ -250,15 +262,16 @@ def create_app(
         domain: Optional[str] = None,
         indicator: Optional[str] = None,
     ):
-        return {"tenant_id": tenant_id, "count": store.count_events(tenant_id, host=host, event_type=event_type, process_name=process_name, user=user, hash_sha256=hash_sha256, process_entity_id=process_entity_id, remote_ip=remote_ip, domain=domain, indicator=indicator)}
+        telemetry = app.state.telemetry_store
+        return {"tenant_id": tenant_id, "count": telemetry.count_events(tenant_id, host=host, event_type=event_type, process_name=process_name, user=user, hash_sha256=hash_sha256, process_entity_id=process_entity_id, remote_ip=remote_ip, domain=domain, indicator=indicator)}
 
     @app.get("/api/v1/admin/events/related", response_model=list[NormalizedEvent])
     def related_events(entity_type: str, value: str, tenant_id: str = Query("default"), limit: int = 100, _admin=Depends(_admin_auth)):
-        return store.related_events(tenant_id, entity_type=entity_type, value=value, limit=limit)
+        return app.state.telemetry_store.related_events(tenant_id, entity_type=entity_type, value=value, limit=limit)
 
     @app.get("/api/v1/admin/events/{event_id}", response_model=NormalizedEvent)
     def get_event(event_id: str, tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):
-        event = store.get_event(tenant_id, event_id)
+        event = app.state.telemetry_store.get_event(tenant_id, event_id)
         if not event:
             raise HTTPException(status_code=404, detail="event_not_found")
         return event
@@ -278,7 +291,8 @@ def create_app(
         indicator: Optional[str] = None,
         limit: int = 100,
     ):
-        return store.list_events(tenant_id, host=host, event_type=event_type, process_name=process_name, user=user, hash_sha256=hash_sha256, process_entity_id=process_entity_id, remote_ip=remote_ip, domain=domain, indicator=indicator, limit=limit)
+        telemetry = app.state.telemetry_store
+        return telemetry.list_events(tenant_id, host=host, event_type=event_type, process_name=process_name, user=user, hash_sha256=hash_sha256, process_entity_id=process_entity_id, remote_ip=remote_ip, domain=domain, indicator=indicator, limit=limit)
 
     @app.get("/api/v1/admin/tasks", response_model=list[TaskRecord])
     def list_tasks(tenant_id: str = Query("default"), agent_id: Optional[str] = None, status: Optional[str] = None, limit: int = 100, _admin=Depends(_admin_auth)):
@@ -346,20 +360,21 @@ def create_app(
         return {
             "profile": runtime["profile"],
             "control_plane_store": runtime["control_plane_store"],
+            "telemetry_projection": _telemetry_storage_config(app.state.telemetry_store),
             "raw_object_store": store.raw_object_storage_config(),
         }
 
     @app.get("/api/v1/admin/investigate/endpoint-context")
     def endpoint_context(host: str, tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):
         agents = [a for a in store.list_agents(tenant_id) if a.get("host") == host]
-        recent_events = store.list_events(tenant_id, host=host, limit=50)
+        recent_events = app.state.telemetry_store.list_events(tenant_id, host=host, limit=50)
         recent_alerts = [a for a in store.list_alerts(tenant_id, limit=100) if a.host == host][:20]
         tasks = [t for t in store.list_tasks(tenant_id, limit=100) if t.agent_id in {a.get("agent_id") for a in agents}][:20]
         return {"tenant_id": tenant_id, "host": host, "agents": agents, "recent_events": recent_events, "recent_alerts": recent_alerts, "recent_tasks": tasks}
 
     @app.get("/api/v1/admin/investigate/hunt")
     def hunt_indicator(indicator: str, tenant_id: str = Query("default"), limit: int = 100, _admin=Depends(_admin_auth)):
-        events = store.list_events(tenant_id, indicator=indicator, limit=limit)
+        events = app.state.telemetry_store.list_events(tenant_id, indicator=indicator, limit=limit)
         alerts = [a for a in store.list_alerts(tenant_id, limit=limit) if indicator.lower() in a.model_dump_json().lower()]
         hosts = sorted({e.host for e in events if e.host} | {a.host for a in alerts if a.host})
         return {"tenant_id": tenant_id, "indicator": indicator, "hosts": hosts, "summary": _hunt_summary([indicator], events, alerts[:limit]), "events": events, "alerts": alerts[:limit]}
@@ -393,7 +408,7 @@ def create_app(
             raise HTTPException(status_code=400, detail="hunt_disabled")
         query = hunt.query or {}
         indicator = hunt.indicator or query.get("indicator")
-        events = store.list_events(
+        events = app.state.telemetry_store.list_events(
             tenant_id,
             host=query.get("host"),
             event_type=query.get("event_type"),
@@ -431,7 +446,7 @@ def create_app(
 
     @app.get("/api/v1/admin/investigate/process-graph")
     def process_graph(process_entity_id: str, host: Optional[str] = None, tenant_id: str = Query("default"), limit: int = 500, _admin=Depends(_admin_auth)):
-        graph = _build_process_graph(store, tenant_id, process_entity_id, host=host, limit=limit)
+        graph = _build_process_graph(app.state.telemetry_store, tenant_id, process_entity_id, host=host, limit=limit)
         if not graph:
             raise HTTPException(status_code=404, detail="process_entity_not_found")
         return graph
@@ -440,7 +455,7 @@ def create_app(
     def process_chain(host: str, process_id: Optional[str] = None, process_entity_id: Optional[str] = None, tenant_id: str = Query("default"), limit: int = 500, _admin=Depends(_admin_auth)):
         if not process_id and not process_entity_id:
             raise HTTPException(status_code=400, detail="process_id_or_process_entity_id_required")
-        events = store.list_events(tenant_id, host=host, limit=limit)
+        events = app.state.telemetry_store.list_events(tenant_id, host=host, limit=limit)
         if process_entity_id:
             by_entity = {e.process_entity_id: e for e in events if e.process_entity_id}
             chain = []
@@ -488,7 +503,7 @@ def create_app(
 
     @app.get("/api/v1/admin/investigate/behavior-context")
     def behavior_context(host: str, tenant_id: str = Query("default"), process_id: Optional[str] = None, process_entity_id: Optional[str] = None, indicator: Optional[str] = None, limit: int = 200, _admin=Depends(_admin_auth)):
-        events = store.list_events(tenant_id, host=host, indicator=indicator, limit=limit)
+        events = app.state.telemetry_store.list_events(tenant_id, host=host, indicator=indicator, limit=limit)
         if process_entity_id:
             events = [e for e in events if e.process_entity_id == process_entity_id or e.parent_process_entity_id == process_entity_id]
         if process_id:
@@ -500,7 +515,7 @@ def create_app(
 
     @app.get("/api/v1/admin/investigate/network-context")
     def network_context(host: str, tenant_id: str = Query("default"), process_id: Optional[str] = None, process_entity_id: Optional[str] = None, remote_ip: Optional[str] = None, limit: int = 200, _admin=Depends(_admin_auth)):
-        events = store.list_events(tenant_id, host=host, event_type="network_connection", remote_ip=remote_ip, limit=limit)
+        events = app.state.telemetry_store.list_events(tenant_id, host=host, event_type="network_connection", remote_ip=remote_ip, limit=limit)
         if process_entity_id:
             events = [e for e in events if e.process_entity_id == process_entity_id]
         if process_id:
@@ -525,7 +540,7 @@ def create_app(
                 classification="unclassified",
             )
         case = store.update_case(req.tenant_id, case.case_id, status="investigating", assignee=req.assignee, priority=req.priority or case.priority) or case
-        workspace = _build_workspace_package(store, req.tenant_id, alert, case)
+        workspace = _build_workspace_package(store, app.state.telemetry_store, req.tenant_id, alert, case)
         workspace["workflow"] = {
             "status": case.status,
             "assignee": case.assignee,
@@ -610,8 +625,8 @@ def create_app(
             raise HTTPException(status_code=404, detail="case_not_found")
         evidence = store.list_case_evidence(tenant_id, case_id)
         alert = store.get_alert(tenant_id, case.alert_id) if case.alert_id else None
-        source_event = _source_event_for_alert(store, tenant_id, alert) if alert else None
-        timeline = _related_timeline(store, tenant_id, source_event, host=alert.host if alert else None)
+        source_event = _source_event_for_alert(app.state.telemetry_store, tenant_id, alert) if alert else None
+        timeline = _related_timeline(app.state.telemetry_store, tenant_id, source_event, host=alert.host if alert else None)
         raw_refs = _raw_refs_from_case_evidence(evidence)
         return {
             "tenant_id": tenant_id,
@@ -621,7 +636,7 @@ def create_app(
             "timeline": timeline,
             "evidence": evidence,
             "raw_evidence_refs": raw_refs,
-            "hunt": _hunt_package(store, tenant_id, timeline, alert),
+            "hunt": _hunt_package(app.state.telemetry_store, tenant_id, timeline, alert, alert_store=store),
             "handoff": {"format": "json", "case_link": f"/api/v1/admin/cases/{case_id}", "generated_at": datetime.now(timezone.utc)},
         }
 
@@ -788,13 +803,13 @@ Run from elevated PowerShell:
     return app
 
 
-def _build_workspace_package(store: SQLiteStore, tenant_id: str, alert: Alert, case: CaseRecord) -> dict[str, Any]:
-    source_event = _source_event_for_alert(store, tenant_id, alert)
-    timeline = _related_timeline(store, tenant_id, source_event, host=alert.host)
+def _build_workspace_package(store: SQLiteStore, telemetry_store, tenant_id: str, alert: Alert, case: CaseRecord) -> dict[str, Any]:
+    source_event = _source_event_for_alert(telemetry_store, tenant_id, alert)
+    timeline = _related_timeline(telemetry_store, tenant_id, source_event, host=alert.host)
     process_graph = None
     if source_event and source_event.process_entity_id:
-        process_graph = _build_process_graph(store, tenant_id, source_event.process_entity_id, host=source_event.host)
-    endpoint_context = _endpoint_context_package(store, tenant_id, alert.host)
+        process_graph = _build_process_graph(telemetry_store, tenant_id, source_event.process_entity_id, host=source_event.host)
+    endpoint_context = _endpoint_context_package(store, telemetry_store, tenant_id, alert.host)
     return {
         "tenant_id": tenant_id,
         "alert": alert,
@@ -802,54 +817,54 @@ def _build_workspace_package(store: SQLiteStore, tenant_id: str, alert: Alert, c
         "endpoint_context": endpoint_context,
         "process_graph": process_graph,
         "related_timeline": timeline,
-        "hunt": _hunt_package(store, tenant_id, timeline, alert),
+        "hunt": _hunt_package(telemetry_store, tenant_id, timeline, alert, alert_store=store),
         "tasks": endpoint_context["recent_tasks"],
         "evidence_links": store.list_case_evidence(tenant_id, case.case_id),
     }
 
 
-def _source_event_for_alert(store: SQLiteStore, tenant_id: str, alert: Alert | None) -> NormalizedEvent | None:
+def _source_event_for_alert(telemetry_store, tenant_id: str, alert: Alert | None) -> NormalizedEvent | None:
     if not alert:
         return None
     event_id = (alert.raw or {}).get("event_id")
     if not event_id:
         return None
-    return store.get_event(tenant_id, str(event_id))
+    return telemetry_store.get_event(tenant_id, str(event_id))
 
 
-def _endpoint_context_package(store: SQLiteStore, tenant_id: str, host: str | None) -> dict[str, Any]:
+def _endpoint_context_package(store: SQLiteStore, telemetry_store, tenant_id: str, host: str | None) -> dict[str, Any]:
     agents = [agent for agent in store.list_agents(tenant_id) if not host or agent.get("host") == host]
     agent_ids = {agent.get("agent_id") for agent in agents}
     return {
         "tenant_id": tenant_id,
         "host": host,
         "agents": agents,
-        "recent_events": store.list_events(tenant_id, host=host, limit=50) if host else [],
+        "recent_events": telemetry_store.list_events(tenant_id, host=host, limit=50) if host else [],
         "recent_alerts": [alert for alert in store.list_alerts(tenant_id, limit=100) if not host or alert.host == host][:20],
         "recent_tasks": [task for task in store.list_tasks(tenant_id, limit=100) if not agent_ids or task.agent_id in agent_ids][:20],
     }
 
 
-def _related_timeline(store: SQLiteStore, tenant_id: str, source_event: NormalizedEvent | None, *, host: str | None) -> list[NormalizedEvent]:
+def _related_timeline(telemetry_store, tenant_id: str, source_event: NormalizedEvent | None, *, host: str | None) -> list[NormalizedEvent]:
     if source_event and source_event.process_entity_id:
-        return store.related_events(tenant_id, entity_type="process_entity_id", value=source_event.process_entity_id, limit=100)
+        return telemetry_store.related_events(tenant_id, entity_type="process_entity_id", value=source_event.process_entity_id, limit=100)
     if source_event and source_event.process_id:
-        return store.related_events(tenant_id, entity_type="process_id", value=source_event.process_id, limit=100)
-    return store.list_events(tenant_id, host=host, limit=100) if host else []
+        return telemetry_store.related_events(tenant_id, entity_type="process_id", value=source_event.process_id, limit=100)
+    return telemetry_store.list_events(tenant_id, host=host, limit=100) if host else []
 
 
-def _hunt_package(store: SQLiteStore, tenant_id: str, timeline: list[NormalizedEvent], alert: Alert | None) -> dict[str, Any]:
+def _hunt_package(telemetry_store, tenant_id: str, timeline: list[NormalizedEvent], alert: Alert | None, *, alert_store: SQLiteStore) -> dict[str, Any]:
     indicators = _timeline_indicators(timeline)
     events: list[NormalizedEvent] = []
     alerts: list[Alert] = []
     seen_event_ids: set[str] = set()
     seen_alert_ids: set[str] = set()
     for indicator in indicators:
-        for event in store.list_events(tenant_id, indicator=indicator, limit=100):
+        for event in telemetry_store.list_events(tenant_id, indicator=indicator, limit=100):
             if event.id not in seen_event_ids:
                 seen_event_ids.add(event.id)
                 events.append(event)
-        for candidate in store.list_alerts(tenant_id, limit=100):
+        for candidate in alert_store.list_alerts(tenant_id, limit=100):
             if candidate.alert_id not in seen_alert_ids and indicator.lower() in candidate.model_dump_json().lower():
                 seen_alert_ids.add(candidate.alert_id)
                 alerts.append(candidate)
@@ -1008,6 +1023,10 @@ def _runtime_config(*, profile: str | None, admin_token: str | None, enrollment_
     if not resolved_control_plane_store:
         resolved_control_plane_store = "postgresql" if resolved_profile == "production" else "sqlite"
     resolved_postgres_dsn = os.environ.get("OPEN_EDR_MDR_POSTGRES_DSN", DEFAULT_POSTGRES_DSN or "")
+    resolved_telemetry_projection = (os.environ.get("OPEN_EDR_MDR_TELEMETRY_PROJECTION", DEFAULT_TELEMETRY_PROJECTION or "") or "").strip().lower()
+    if not resolved_telemetry_projection:
+        resolved_telemetry_projection = "clickhouse" if resolved_profile == "production" else "sqlite"
+    resolved_clickhouse_dsn = os.environ.get("OPEN_EDR_MDR_CLICKHOUSE_DSN", DEFAULT_CLICKHOUSE_DSN or "")
 
     if resolved_profile == "production":
         if resolved_admin_token.strip().lower() in DEV_ADMIN_TOKENS:
@@ -1024,6 +1043,8 @@ def _runtime_config(*, profile: str | None, admin_token: str | None, enrollment_
         "server_trust": resolved_server_trust,
         "control_plane_store": resolved_control_plane_store,
         "postgres_dsn": resolved_postgres_dsn,
+        "telemetry_projection": resolved_telemetry_projection,
+        "clickhouse_dsn": resolved_clickhouse_dsn,
     }
 
 
@@ -1035,6 +1056,28 @@ def _store_for_runtime(db_path: str | Path, runtime: dict) -> SQLiteStore:
     if runtime["control_plane_store"] == "postgresql":
         return PostgreSQLStore(runtime["postgres_dsn"], object_store_base_dir=Path(db_path).parent)
     raise ValueError(f"unsupported_control_plane_store:{runtime['control_plane_store']}")
+
+
+def _telemetry_store_for_runtime(store: SQLiteStore, runtime: dict):
+    if runtime["profile"] == "production" and (runtime["telemetry_projection"] != "clickhouse" or not runtime["clickhouse_dsn"].strip()):
+        raise ValueError("production_clickhouse_dsn_required")
+    if runtime["telemetry_projection"] == "sqlite":
+        return store
+    if runtime["telemetry_projection"] == "clickhouse":
+        if not runtime["clickhouse_dsn"].strip():
+            raise ValueError("clickhouse_dsn_required")
+        return ClickHouseTelemetryStore(runtime["clickhouse_dsn"])
+    raise ValueError(f"unsupported_telemetry_projection:{runtime['telemetry_projection']}")
+
+
+def _telemetry_storage_config(telemetry_store) -> dict[str, Any]:
+    if hasattr(telemetry_store, "telemetry_storage_config"):
+        return telemetry_store.telemetry_storage_config()
+    retention = telemetry_store.telemetry_retention_policy() if hasattr(telemetry_store, "telemetry_retention_policy") else {}
+    return {
+        "storage_provider": getattr(telemetry_store, "storage_profile", "sqlite"),
+        "retention": retention,
+    }
 
 
 def _validate_deployment_server_url(app: FastAPI, server_url: str) -> None:

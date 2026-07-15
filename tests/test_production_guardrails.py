@@ -11,6 +11,10 @@ def _production_test_store(tmp_path, name: str) -> SQLiteStore:
     return SQLiteStore(tmp_path / name)
 
 
+def _production_test_telemetry(tmp_path, name: str) -> SQLiteStore:
+    return SQLiteStore(tmp_path / name)
+
+
 def test_server_requires_explicit_profile_when_environment_is_unset(tmp_path, monkeypatch):
     monkeypatch.delenv("OPEN_EDR_MDR_PROFILE", raising=False)
 
@@ -39,6 +43,7 @@ def test_production_profile_omits_implicit_dev_enrollment_token(tmp_path):
             enrollment_token="tenant-bootstrap-token",
             server_trust="system",
             store=_production_test_store(tmp_path, "prod-no-implicit-token.sqlite3"),
+            telemetry_store=_production_test_telemetry(tmp_path, "prod-no-implicit-token-telemetry.sqlite3"),
         )
     )
 
@@ -88,6 +93,21 @@ def test_postgresql_control_plane_profile_requires_postgresql_driver(tmp_path, m
         )
 
 
+def test_production_profile_requires_clickhouse_telemetry_projection(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPEN_EDR_MDR_TELEMETRY_PROJECTION", raising=False)
+    monkeypatch.delenv("OPEN_EDR_MDR_CLICKHOUSE_DSN", raising=False)
+
+    with pytest.raises(ValueError, match="production_clickhouse_dsn_required"):
+        create_app(
+            tmp_path / "prod-missing-clickhouse.sqlite3",
+            profile="production",
+            admin_token="operator-admin-token",
+            enrollment_token="tenant-bootstrap-token",
+            server_trust="system",
+            store=_production_test_store(tmp_path, "prod-missing-clickhouse-control.sqlite3"),
+        )
+
+
 def test_production_profile_rejects_default_admin_token(tmp_path):
     with pytest.raises(ValueError, match="production_admin_token"):
         create_app(
@@ -130,6 +150,7 @@ def test_production_deployment_download_rejects_http_server_url(tmp_path):
             enrollment_token="tenant-bootstrap-token",
             server_trust="system",
             store=_production_test_store(tmp_path, "prod-download.sqlite3"),
+            telemetry_store=_production_test_telemetry(tmp_path, "prod-download-telemetry.sqlite3"),
         )
     )
 
@@ -153,6 +174,7 @@ def test_production_task_policy_blocks_destructive_tasks(tmp_path):
             enrollment_token="tenant-bootstrap-token",
             server_trust="system",
             store=_production_test_store(tmp_path, "prod-task-policy.sqlite3"),
+            telemetry_store=_production_test_telemetry(tmp_path, "prod-task-policy-telemetry.sqlite3"),
         )
     )
     token = client.post(
