@@ -41,6 +41,7 @@ from open_edr_mdr_agent.api.models import (
     EvidenceUploadRequest,
     EvidenceUploadResponse,
 )
+from open_edr_mdr_agent.api.postgres_store import PostgreSQLStore
 from open_edr_mdr_agent.api.store import SQLiteStore
 from open_edr_mdr_agent.api.task_catalog import READONLY_TASK_CATALOG, TaskArgumentError, catalog_for_response_mode, policy_audit, read_only_policy_block, validate_task_args
 from open_edr_mdr_agent.core.detection import detect_many
@@ -52,6 +53,8 @@ DEFAULT_DEV_TOKEN = os.environ.get("OPEN_EDR_MDR_DEV_ENROLLMENT_TOKEN", "dev-tok
 DEFAULT_ADMIN_TOKEN = os.environ.get("OPEN_EDR_MDR_ADMIN_TOKEN", "dev-admin-token")
 DEFAULT_PROFILE = os.environ.get("OPEN_EDR_MDR_PROFILE")
 DEFAULT_SERVER_TRUST = os.environ.get("OPEN_EDR_MDR_SERVER_TRUST")
+DEFAULT_CONTROL_PLANE_STORE = os.environ.get("OPEN_EDR_MDR_CONTROL_PLANE_STORE")
+DEFAULT_POSTGRES_DSN = os.environ.get("OPEN_EDR_MDR_POSTGRES_DSN")
 
 PROFILES = {"dev", "demo", "production"}
 DEV_ADMIN_TOKENS = {"", "dev-admin-token", "admin", "changeme", "change-me"}
@@ -66,10 +69,10 @@ def create_app(
     admin_token: str | None = None,
     enrollment_token: str | None = None,
     server_trust: str | None = None,
+    store: SQLiteStore | None = None,
 ) -> FastAPI:
     runtime = _runtime_config(profile=profile, admin_token=admin_token, enrollment_token=enrollment_token, server_trust=server_trust)
     app = FastAPI(title="Shiori API", version="0.1.0")
-    store = SQLiteStore(db_path)
     app.state.custom_rules = load_rules(os.environ.get("OPEN_EDR_MDR_RULES"))
     app.state.runtime_config = runtime
     if create_dev_token is None:
@@ -77,8 +80,11 @@ def create_app(
     if create_dev_token:
         if runtime["profile"] == "production":
             raise ValueError("production_create_dev_token_disabled")
-        store.create_enrollment_token("default", token=runtime["enrollment_token"], max_uses=None)
+    store = store or _store_for_runtime(db_path, runtime)
     app.state.store = store
+    app.state.runtime_config = {**runtime, "control_plane_store": getattr(store, "storage_profile", runtime["control_plane_store"])}
+    if create_dev_token:
+        store.create_enrollment_token("default", token=runtime["enrollment_token"], max_uses=None)
 
     @app.get("/health")
     def health():
@@ -333,6 +339,15 @@ def create_app(
     @app.get("/api/v1/admin/raw-evidence/storage-config")
     def raw_evidence_storage_config(_admin=Depends(_admin_auth)):
         return store.raw_object_storage_config()
+
+    @app.get("/api/v1/admin/storage-profile")
+    def storage_profile(_admin=Depends(_admin_auth)):
+        runtime = app.state.runtime_config
+        return {
+            "profile": runtime["profile"],
+            "control_plane_store": runtime["control_plane_store"],
+            "raw_object_store": store.raw_object_storage_config(),
+        }
 
     @app.get("/api/v1/admin/investigate/endpoint-context")
     def endpoint_context(host: str, tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):
@@ -989,6 +1004,10 @@ def _runtime_config(*, profile: str | None, admin_token: str | None, enrollment_
     resolved_admin_token = admin_token if admin_token is not None else os.environ.get("OPEN_EDR_MDR_ADMIN_TOKEN", DEFAULT_ADMIN_TOKEN)
     resolved_enrollment_token = enrollment_token if enrollment_token is not None else os.environ.get("OPEN_EDR_MDR_DEV_ENROLLMENT_TOKEN", DEFAULT_DEV_TOKEN)
     resolved_server_trust = server_trust if server_trust is not None else os.environ.get("OPEN_EDR_MDR_SERVER_TRUST", DEFAULT_SERVER_TRUST or "")
+    resolved_control_plane_store = (os.environ.get("OPEN_EDR_MDR_CONTROL_PLANE_STORE", DEFAULT_CONTROL_PLANE_STORE or "") or "").strip().lower()
+    if not resolved_control_plane_store:
+        resolved_control_plane_store = "postgresql" if resolved_profile == "production" else "sqlite"
+    resolved_postgres_dsn = os.environ.get("OPEN_EDR_MDR_POSTGRES_DSN", DEFAULT_POSTGRES_DSN or "")
 
     if resolved_profile == "production":
         if resolved_admin_token.strip().lower() in DEV_ADMIN_TOKENS:
@@ -997,14 +1016,25 @@ def _runtime_config(*, profile: str | None, admin_token: str | None, enrollment_
             raise ValueError("production_enrollment_token_rejected")
         if not resolved_server_trust.strip():
             raise ValueError("production_server_trust_required")
-
     return {
         "profile": resolved_profile,
         "response_mode": "read_only",
         "admin_token": resolved_admin_token,
         "enrollment_token": resolved_enrollment_token,
         "server_trust": resolved_server_trust,
+        "control_plane_store": resolved_control_plane_store,
+        "postgres_dsn": resolved_postgres_dsn,
     }
+
+
+def _store_for_runtime(db_path: str | Path, runtime: dict) -> SQLiteStore:
+    if runtime["profile"] == "production" and (runtime["control_plane_store"] != "postgresql" or not runtime["postgres_dsn"].strip()):
+        raise ValueError("production_postgresql_dsn_required")
+    if runtime["control_plane_store"] == "sqlite":
+        return SQLiteStore(db_path)
+    if runtime["control_plane_store"] == "postgresql":
+        return PostgreSQLStore(runtime["postgres_dsn"], object_store_base_dir=Path(db_path).parent)
+    raise ValueError(f"unsupported_control_plane_store:{runtime['control_plane_store']}")
 
 
 def _validate_deployment_server_url(app: FastAPI, server_url: str) -> None:

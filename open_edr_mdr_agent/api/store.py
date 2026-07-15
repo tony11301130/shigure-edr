@@ -22,6 +22,8 @@ def utc_now() -> str:
 
 
 class SQLiteStore:
+    storage_profile = "sqlite"
+
     def __init__(self, path: str | Path, raw_object_store: RawObjectStore | None = None):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -49,6 +51,10 @@ class SQLiteStore:
                     max_uses integer,
                     uses integer not null default 0,
                     revoked integer not null default 0,
+                    created_at text not null
+                );
+                create table if not exists tenants (
+                    tenant_id text primary key,
                     created_at text not null
                 );
                 create table if not exists agents (
@@ -249,6 +255,9 @@ class SQLiteStore:
         if column not in cols:
             conn.execute(f"alter table {table} add column {column} {ddl_type}")
 
+    def _ensure_tenant(self, conn: sqlite3.Connection, tenant_id: str) -> None:
+        conn.execute("insert or ignore into tenants(tenant_id, created_at) values (?, ?)", (tenant_id, utc_now()))
+
     def _insert_raw_evidence(
         self,
         conn: sqlite3.Connection,
@@ -303,6 +312,7 @@ class SQLiteStore:
         if config.version <= current.version:
             config.version = current.version + 1
         with self.connect() as conn:
+            self._ensure_tenant(conn, tenant_id)
             conn.execute(
                 "insert or replace into tenant_configs(tenant_id, version, config_json, updated_at) values (?, ?, ?, ?)",
                 (tenant_id, config.version, config.model_dump_json(), utc_now()),
@@ -312,6 +322,7 @@ class SQLiteStore:
     def create_enrollment_token(self, tenant_id: str = "default", token: Optional[str] = None, max_uses: Optional[int] = None, expires_at: Optional[str] = None) -> str:
         token = token or secrets.token_urlsafe(32)
         with self.connect() as conn:
+            self._ensure_tenant(conn, tenant_id)
             conn.execute(
                 "insert or replace into enrollment_tokens(token, tenant_id, expires_at, max_uses, uses, revoked, created_at) values (?, ?, ?, ?, 0, 0, ?)",
                 (token, tenant_id, expires_at, max_uses, utc_now()),

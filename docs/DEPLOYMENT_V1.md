@@ -8,16 +8,27 @@ This runbook captures the current single-tenant intranet deployment path for the
 2. Set runtime configuration:
 
 ```bash
-export OPEN_EDR_MDR_DB=/var/lib/open-edr-mdr/open-edr-mdr.sqlite3
 export OPEN_EDR_MDR_PROFILE=production
+export OPEN_EDR_MDR_CONTROL_PLANE_STORE=postgresql
+export OPEN_EDR_MDR_POSTGRES_DSN='postgresql://shigure:<password>@postgres.internal:5432/shigure'
 export OPEN_EDR_MDR_ADMIN_TOKEN='<operator-admin-token>'
 export OPEN_EDR_MDR_DEV_ENROLLMENT_TOKEN='<initial-enrollment-token>'
 export OPEN_EDR_MDR_SERVER_TRUST=system
 ```
 
-Production mode rejects the built-in `dev-admin-token` / `dev-token` shortcuts and requires an explicit server trust mode. `system` means the agent should use normal operating-system certificate validation; use a CA bundle path when the deployment relies on a private intranet CA.
+Production mode rejects the built-in `dev-admin-token` / `dev-token` shortcuts,
+requires an explicit server trust mode, and requires a PostgreSQL control-plane
+DSN. `system` means the agent should use normal operating-system certificate
+validation; use a CA bundle path when the deployment relies on a private
+intranet CA.
 
 For local smoke tests only, keep the profile as `dev` or `demo`; those profiles continue to allow HTTP and dev bootstrap credentials.
+
+SQLite remains the dev/demo store. Set `OPEN_EDR_MDR_DB` only for those local
+profiles, for example `/tmp/open-edr-mdr-dev.sqlite3`. Production workflow and
+control-plane metadata are stored in PostgreSQL; raw evidence payloads remain
+behind the configured object storage adapter. Operators can confirm the active
+profile with `/api/v1/admin/storage-profile`.
 
 3. Start the API behind an intranet reverse proxy:
 

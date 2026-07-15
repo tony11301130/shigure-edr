@@ -1,7 +1,14 @@
+import builtins
+
 import pytest
 from fastapi.testclient import TestClient
 
 from open_edr_mdr_agent.api.app import create_app
+from open_edr_mdr_agent.api.store import SQLiteStore
+
+
+def _production_test_store(tmp_path, name: str) -> SQLiteStore:
+    return SQLiteStore(tmp_path / name)
 
 
 def test_server_requires_explicit_profile_when_environment_is_unset(tmp_path, monkeypatch):
@@ -31,6 +38,7 @@ def test_production_profile_omits_implicit_dev_enrollment_token(tmp_path):
             admin_token="operator-admin-token",
             enrollment_token="tenant-bootstrap-token",
             server_trust="system",
+            store=_production_test_store(tmp_path, "prod-no-implicit-token.sqlite3"),
         )
     )
 
@@ -42,6 +50,42 @@ def test_production_profile_omits_implicit_dev_enrollment_token(tmp_path):
 
     assert tokens.status_code == 200
     assert tokens.json()["tokens"] == []
+
+
+def test_production_profile_requires_postgresql_control_plane_store(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPEN_EDR_MDR_CONTROL_PLANE_STORE", raising=False)
+    monkeypatch.delenv("OPEN_EDR_MDR_POSTGRES_DSN", raising=False)
+
+    with pytest.raises(ValueError, match="production_postgresql_dsn_required"):
+        create_app(
+            tmp_path / "prod-sqlite-control-plane.sqlite3",
+            profile="production",
+            admin_token="operator-admin-token",
+            enrollment_token="tenant-bootstrap-token",
+            server_trust="system",
+        )
+
+
+def test_postgresql_control_plane_profile_requires_postgresql_driver(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPEN_EDR_MDR_CONTROL_PLANE_STORE", "postgresql")
+    monkeypatch.setenv("OPEN_EDR_MDR_POSTGRES_DSN", "postgresql://shigure:shigure@127.0.0.1:65432/shigure")
+    real_import = builtins.__import__
+
+    def import_without_psycopg(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "psycopg" or name.startswith("psycopg."):
+            raise ModuleNotFoundError("No module named 'psycopg'")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_psycopg)
+
+    with pytest.raises(ValueError, match="postgresql_driver_missing"):
+        create_app(
+            tmp_path / "ignored-postgres.sqlite3",
+            profile="production",
+            admin_token="operator-admin-token",
+            enrollment_token="tenant-bootstrap-token",
+            server_trust="system",
+        )
 
 
 def test_production_profile_rejects_default_admin_token(tmp_path):
@@ -85,6 +129,7 @@ def test_production_deployment_download_rejects_http_server_url(tmp_path):
             admin_token="operator-admin-token",
             enrollment_token="tenant-bootstrap-token",
             server_trust="system",
+            store=_production_test_store(tmp_path, "prod-download.sqlite3"),
         )
     )
 
@@ -107,6 +152,7 @@ def test_production_task_policy_blocks_destructive_tasks(tmp_path):
             admin_token="operator-admin-token",
             enrollment_token="tenant-bootstrap-token",
             server_trust="system",
+            store=_production_test_store(tmp_path, "prod-task-policy.sqlite3"),
         )
     )
     token = client.post(
