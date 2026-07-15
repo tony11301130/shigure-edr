@@ -1,0 +1,286 @@
+{
+  "process_graph": {
+    "host": "REL-GRAPH01",
+    "parent_entity": "peid:REL-GRAPH01:boot-r1:100:2026-07-15T00:00:00Z",
+    "child_entity": "peid:REL-GRAPH01:boot-r1:200:2026-07-15T00:00:10Z",
+    "grandchild_entity": "peid:REL-GRAPH01:boot-r1:300:2026-07-15T00:00:20Z",
+    "reused_pid_entity": "peid:REL-GRAPH01:boot-r1:100:2026-07-15T01:00:00Z",
+    "orphan_entity": "peid:REL-GRAPH01:boot-r1:400:2026-07-15T02:00:00Z",
+    "events": [
+      {
+        "source": "internal",
+        "event_type": "process_start",
+        "timestamp": "2026-07-15T00:00:00Z",
+        "tenant_id": "default",
+        "host": "REL-GRAPH01",
+        "process_name": "explorer.exe",
+        "process_id": "100",
+        "process_entity_id": "peid:REL-GRAPH01:boot-r1:100:2026-07-15T00:00:00Z",
+        "boot_id": "boot-r1",
+        "process_create_time": "2026-07-15T00:00:00Z",
+        "process_identity_confidence": "high",
+        "severity": "info",
+        "raw": {"golden_seq": 1}
+      },
+      {
+        "source": "internal",
+        "event_type": "process_start",
+        "timestamp": "2026-07-15T00:00:10Z",
+        "tenant_id": "default",
+        "host": "REL-GRAPH01",
+        "process_name": "powershell.exe",
+        "process_id": "200",
+        "parent_process_id": "100",
+        "process_entity_id": "peid:REL-GRAPH01:boot-r1:200:2026-07-15T00:00:10Z",
+        "parent_process_entity_id": "peid:REL-GRAPH01:boot-r1:100:2026-07-15T00:00:00Z",
+        "boot_id": "boot-r1",
+        "process_create_time": "2026-07-15T00:00:10Z",
+        "command_line": "powershell -enc SQBFAFgA",
+        "user": "ACME\\analyst",
+        "process_identity_confidence": "high",
+        "severity": "info",
+        "raw": {"golden_seq": 2}
+      },
+      {
+        "source": "internal",
+        "event_type": "network_connection",
+        "timestamp": "2026-07-15T00:00:11Z",
+        "tenant_id": "default",
+        "host": "REL-GRAPH01",
+        "process_name": "powershell.exe",
+        "process_id": "200",
+        "process_entity_id": "peid:REL-GRAPH01:boot-r1:200:2026-07-15T00:00:10Z",
+        "remote_ip": "203.0.113.10",
+        "remote_port": 443,
+        "user": "ACME\\analyst",
+        "severity": "info",
+        "raw": {"golden_seq": 3}
+      },
+      {
+        "source": "internal",
+        "event_type": "process_start",
+        "timestamp": "2026-07-15T00:00:20Z",
+        "tenant_id": "default",
+        "host": "REL-GRAPH01",
+        "process_name": "cmd.exe",
+        "process_id": "300",
+        "parent_process_id": "200",
+        "process_entity_id": "peid:REL-GRAPH01:boot-r1:300:2026-07-15T00:00:20Z",
+        "parent_process_entity_id": "peid:REL-GRAPH01:boot-r1:200:2026-07-15T00:00:10Z",
+        "boot_id": "boot-r1",
+        "process_create_time": "2026-07-15T00:00:20Z",
+        "process_identity_confidence": "high",
+        "severity": "info",
+        "raw": {"golden_seq": 4}
+      },
+      {
+        "source": "internal",
+        "event_type": "file_event",
+        "timestamp": "2026-07-15T00:00:21Z",
+        "tenant_id": "default",
+        "host": "REL-GRAPH01",
+        "process_name": "cmd.exe",
+        "process_id": "300",
+        "process_entity_id": "peid:REL-GRAPH01:boot-r1:300:2026-07-15T00:00:20Z",
+        "file_path": "C:/Temp/release-dropper.bat",
+        "severity": "medium",
+        "raw": {"golden_seq": 5}
+      },
+      {
+        "source": "internal",
+        "event_type": "process_start",
+        "timestamp": "2026-07-15T01:00:00Z",
+        "tenant_id": "default",
+        "host": "REL-GRAPH01",
+        "process_name": "notepad.exe",
+        "process_id": "100",
+        "process_entity_id": "peid:REL-GRAPH01:boot-r1:100:2026-07-15T01:00:00Z",
+        "boot_id": "boot-r1",
+        "process_create_time": "2026-07-15T01:00:00Z",
+        "process_identity_confidence": "high",
+        "severity": "info",
+        "raw": {"golden_seq": 6}
+      },
+      {
+        "source": "internal",
+        "event_type": "process_start",
+        "timestamp": "2026-07-15T02:00:00Z",
+        "tenant_id": "default",
+        "host": "REL-GRAPH01",
+        "process_name": "orphan.exe",
+        "process_id": "400",
+        "parent_process_id": "999",
+        "process_entity_id": "peid:REL-GRAPH01:boot-r1:400:2026-07-15T02:00:00Z",
+        "boot_id": "boot-r1",
+        "process_create_time": "2026-07-15T02:00:00Z",
+        "process_identity_confidence": "low",
+        "missing_parent_reason": "agent_restart_gap",
+        "severity": "info",
+        "raw": {"golden_seq": 7}
+      }
+    ],
+    "expectations": {
+      "child": {
+        "process_entity_id": "peid:REL-GRAPH01:boot-r1:200:2026-07-15T00:00:10Z",
+        "ancestors": ["peid:REL-GRAPH01:boot-r1:100:2026-07-15T00:00:00Z"],
+        "descendants": ["peid:REL-GRAPH01:boot-r1:300:2026-07-15T00:00:20Z"],
+        "timeline_event_types": ["process_start", "network_connection", "process_start", "file_event"],
+        "gaps": []
+      },
+      "orphan": {
+        "process_entity_id": "peid:REL-GRAPH01:boot-r1:400:2026-07-15T02:00:00Z",
+        "ancestors": [],
+        "descendants": [],
+        "gaps": [
+          {
+            "process_entity_id": "peid:REL-GRAPH01:boot-r1:400:2026-07-15T02:00:00Z",
+            "parent_process_entity_id": null,
+            "missing_parent_reason": "agent_restart_gap",
+            "process_identity_confidence": "low"
+          }
+        ]
+      },
+      "reused_pid": {
+        "process_entity_id": "peid:REL-GRAPH01:boot-r1:100:2026-07-15T01:00:00Z",
+        "ancestors": [],
+        "descendants": [],
+        "gaps": []
+      }
+    }
+  },
+  "detection_replay": [
+    {
+      "id": "encoded_powershell",
+      "events": [
+        {
+          "source": "internal",
+          "event_type": "process_start",
+          "tenant_id": "default",
+          "host": "REL-DET01",
+          "process_name": "powershell.exe",
+          "process_id": "501",
+          "process_entity_id": "peid:REL-DET01:boot-d1:501:2026-07-15T03:00:00Z",
+          "command_line": "powershell -enc SQBFAFgA",
+          "severity": "info",
+          "raw": {"scenario": "encoded_powershell"}
+        }
+      ],
+      "expected_alerts": ["Suspicious encoded PowerShell command"]
+    },
+    {
+      "id": "service_task_change",
+      "events": [
+        {
+          "source": "internal",
+          "event_type": "process_start",
+          "tenant_id": "default",
+          "host": "REL-DET01",
+          "process_name": "cmd.exe",
+          "process_id": "502",
+          "process_entity_id": "peid:REL-DET01:boot-d1:502:2026-07-15T03:01:00Z",
+          "command_line": "schtasks /create /tn release-check /tr calc.exe",
+          "severity": "info",
+          "raw": {"scenario": "service_task_change"}
+        },
+        {
+          "source": "internal",
+          "event_type": "endpoint_state",
+          "tenant_id": "default",
+          "host": "REL-DET01",
+          "severity": "info",
+          "raw": {"collector": "windows_event_log", "query": "service_control_manager", "message": "A service was installed"}
+        }
+      ],
+      "expected_alerts": ["Suspicious service or scheduled task change", "Windows service installed"]
+    },
+    {
+      "id": "process_attributed_network_ioc",
+      "events": [
+        {
+          "source": "internal",
+          "event_type": "network_connection",
+          "tenant_id": "default",
+          "host": "REL-DET01",
+          "process_name": "powershell.exe",
+          "process_id": "503",
+          "process_entity_id": "peid:REL-DET01:boot-d1:503:2026-07-15T03:02:00Z",
+          "remote_ip": "203.0.113.10",
+          "remote_port": 443,
+          "severity": "info",
+          "raw": {"scenario": "process_attributed_network_ioc"}
+        }
+      ],
+      "expected_alerts": ["Script interpreter network connection", "Known bad indicator match"]
+    },
+    {
+      "id": "file_hash_ioc",
+      "events": [
+        {
+          "source": "internal",
+          "event_type": "file_event",
+          "tenant_id": "default",
+          "host": "REL-DET01",
+          "process_name": "powershell.exe",
+          "process_id": "504",
+          "process_entity_id": "peid:REL-DET01:boot-d1:504:2026-07-15T03:03:00Z",
+          "file_path": "C:/Temp/release.bin",
+          "hash_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "severity": "info",
+          "raw": {"scenario": "file_hash_ioc"}
+        }
+      ],
+      "expected_alerts": ["Known bad indicator match"]
+    }
+  ],
+  "load_scenarios": [
+    {"id": "alert_queue", "query_path": "/api/v1/admin/alerts", "metric_targets": ["p95_latency_ms", "result_count"]},
+    {"id": "endpoint_timeline", "query_path": "/api/v1/admin/events", "metric_targets": ["p95_latency_ms", "tenant_scope"]},
+    {"id": "process_graph", "query_path": "/api/v1/admin/investigate/process-graph", "metric_targets": ["p95_latency_ms", "gap_visibility"]},
+    {"id": "indicator_hunt", "query_path": "/api/v1/admin/hunts/{hunt_id}/run", "metric_targets": ["p95_latency_ms", "event_count"]},
+    {"id": "case_evidence", "query_path": "/api/v1/admin/cases/{case_id}/handoff", "metric_targets": ["p95_latency_ms", "raw_ref_integrity"]}
+  ],
+  "release_report_example": {
+    "automated_gates": {
+      "python_tests": {"status": "passed", "evidence": ".venv/bin/python -m pytest -q"},
+      "go_tests": {"status": "passed", "evidence": "go test ./..."},
+      "m0_smoke": {"status": "passed", "evidence": "scripts/m0_smoke.sh"},
+      "golden_dataset_replay": {"status": "passed", "evidence": "tests/test_release_validation_harness.py"},
+      "detection_replay": {"status": "passed", "evidence": "tests/test_release_validation_harness.py"},
+      "mdr_workspace_loop": {"status": "passed", "evidence": "tests/test_mdr_workspace_loop.py"},
+      "safe_response_evidence": {"status": "passed", "evidence": "tests/test_task_catalog.py tests/test_agent_evidence_upload.py"}
+    },
+    "lab_gates": {
+      "windows_service_runtime": {"status": "passed", "evidence": "docs/WINDOWS_RELEASE_LAB.md"},
+      "windows_etw_process": {"status": "passed", "evidence": "docs/WINDOWS_ETW_PROCESS_LAB.md"},
+      "windows_event_log_subscription": {"status": "passed", "evidence": "docs/WINDOWS_EVENT_LOG_SUBSCRIPTION_LAB.md"},
+      "storage_load_retention": {"status": "passed", "evidence": "scripts/load_sim.py + release load scenarios"}
+    },
+    "load_scenarios": [
+      {"id": "alert_queue", "metric_targets": ["p95_latency_ms", "result_count"]},
+      {"id": "endpoint_timeline", "metric_targets": ["p95_latency_ms", "tenant_scope"]},
+      {"id": "process_graph", "metric_targets": ["p95_latency_ms", "gap_visibility"]},
+      {"id": "indicator_hunt", "metric_targets": ["p95_latency_ms", "event_count"]},
+      {"id": "case_evidence", "metric_targets": ["p95_latency_ms", "raw_ref_integrity"]}
+    ],
+    "known_gap_review": {
+      "status": "passed",
+      "evidence": "release owner reviewed known gaps",
+      "blockers": {
+        "silent_graph_uncertainty": false,
+        "destructive_task_exposure": false,
+        "unaudited_evidence": false,
+        "missing_workflow_steps": false,
+        "missing_windows_runtime_validation": false,
+        "unbounded_spool": false,
+        "production_dev_token_shortcuts": false
+      }
+    },
+    "documents": [
+      "docs/RELEASE_VALIDATION.md",
+      "docs/WINDOWS_RELEASE_LAB.md",
+      "docs/WINDOWS_ETW_PROCESS_LAB.md",
+      "docs/WINDOWS_EVENT_LOG_SUBSCRIPTION_LAB.md",
+      "docs/LOAD_TESTING.md"
+    ]
+  }
+}

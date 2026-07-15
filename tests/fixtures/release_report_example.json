@@ -1,0 +1,44 @@
+{
+  "automated_gates": {
+    "python_tests": {"status": "passed", "evidence": ".venv/bin/python -m pytest -q"},
+    "go_tests": {"status": "passed", "evidence": "go test ./..."},
+    "m0_smoke": {"status": "passed", "evidence": "scripts/m0_smoke.sh"},
+    "golden_dataset_replay": {"status": "passed", "evidence": "tests/test_release_validation_harness.py"},
+    "detection_replay": {"status": "passed", "evidence": "tests/test_release_validation_harness.py"},
+    "mdr_workspace_loop": {"status": "passed", "evidence": "tests/test_mdr_workspace_loop.py"},
+    "safe_response_evidence": {"status": "passed", "evidence": "tests/test_task_catalog.py tests/test_agent_evidence_upload.py"}
+  },
+  "lab_gates": {
+    "windows_service_runtime": {"status": "passed", "evidence": "docs/WINDOWS_RELEASE_LAB.md"},
+    "windows_etw_process": {"status": "passed", "evidence": "docs/WINDOWS_ETW_PROCESS_LAB.md"},
+    "windows_event_log_subscription": {"status": "passed", "evidence": "docs/WINDOWS_EVENT_LOG_SUBSCRIPTION_LAB.md"},
+    "storage_load_retention": {"status": "passed", "evidence": "scripts/load_sim.py + release load scenarios"}
+  },
+  "load_scenarios": [
+    {"id": "alert_queue", "metric_targets": ["p95_latency_ms", "result_count"]},
+    {"id": "endpoint_timeline", "metric_targets": ["p95_latency_ms", "tenant_scope"]},
+    {"id": "process_graph", "metric_targets": ["p95_latency_ms", "gap_visibility"]},
+    {"id": "indicator_hunt", "metric_targets": ["p95_latency_ms", "event_count"]},
+    {"id": "case_evidence", "metric_targets": ["p95_latency_ms", "raw_ref_integrity"]}
+  ],
+  "known_gap_review": {
+    "status": "passed",
+    "evidence": "release owner reviewed known gaps",
+    "blockers": {
+      "silent_graph_uncertainty": false,
+      "destructive_task_exposure": false,
+      "unaudited_evidence": false,
+      "missing_workflow_steps": false,
+      "missing_windows_runtime_validation": false,
+      "unbounded_spool": false,
+      "production_dev_token_shortcuts": false
+    }
+  },
+  "documents": [
+    "docs/RELEASE_VALIDATION.md",
+    "docs/WINDOWS_RELEASE_LAB.md",
+    "docs/WINDOWS_ETW_PROCESS_LAB.md",
+    "docs/WINDOWS_EVENT_LOG_SUBSCRIPTION_LAB.md",
+    "docs/LOAD_TESTING.md"
+  ]
+}
