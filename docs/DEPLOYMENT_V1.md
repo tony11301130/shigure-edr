@@ -1,4 +1,4 @@
-# Intranet V1 Deployment Runbook
+# Shigure Intranet V1 Deployment Runbook
 
 This runbook captures the current single-tenant intranet deployment path for the M1 prototype. It intentionally keeps the endpoint-facing shape to one branded Windows agent and a central server with outbound agent polling only.
 
@@ -51,7 +51,7 @@ curl http://127.0.0.1:8080/health
 
 The agent communicates outbound to the server. It enrolls once, stores local state, heartbeats for config, uploads telemetry, polls for queued read-only tasks, and uploads task results with raw evidence hashes.
 
-The current binary, service, and Windows path examples still use Shiori compatibility names until the planned Shigure runtime naming migration lands.
+Shigure is the product name. The current binary, service, and Windows path examples still use Shiori compatibility names until the planned Shigure runtime naming migration lands.
 
 ```powershell
 .\shiori-agent.exe `

@@ -76,6 +76,7 @@ def test_agent_package_zip_contains_binary_config_and_installer(tmp_path, monkey
         assert "--install-dir" in install_ps1
         assert "--config" in install_ps1
         readme = zf.read("README.txt").decode()
+        assert "Shigure Agent deployment package" in readme
         assert "C:\\ProgramData\\Shiori\\shiori-agent-state.json" in readme
         assert "service command line does not contain the enrollment token" in readme
         assert "removes enrollment_token from the installed config" in readme
@@ -86,9 +87,10 @@ def test_minimal_ui_contains_endpoint_task_and_download_controls(tmp_path):
     res = client.get("/ui")
     assert res.status_code == 200
     text = res.text
+    assert client.app.title == "Shigure API"
     assert "Investigation queue" in text
     assert "Recommended next steps" in text
-    assert "Deploy Shiori Agent" in text
+    assert "Deploy Shigure Agent" in text
     assert "Related" in text and "Host day" in text
     assert "/api/v1/admin/tasks" in text
     assert "/api/v1/admin/downloads/agent/package" in text

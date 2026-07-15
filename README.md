@@ -1,6 +1,8 @@
-# Shiori Agent
+# Shigure EDR
 
 Prototype project for building an in-house EDR + MDR endpoint layer from open-source sensors.
+
+Product name: **時雨 / Shigure**.
 
 The first goal is **Fidelis Endpoint tool-kit parity**, not a kernel-level EDR driver.
 
@@ -45,7 +47,7 @@ It does **not** yet connect to live Wazuh/Fleet/Velociraptor APIs. Those adapter
 ## Quick start
 
 ```bash
-cd /opt/open-edr-mdr-agent
+cd /opt/shigure
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -e .
@@ -86,10 +88,12 @@ sc.exe start ShioriAgent
 .\shiori-agent.exe --uninstall-service
 ```
 
+The current binary, service, and Windows path examples still use Shiori compatibility names until the planned Shigure runtime naming migration lands. See `docs/SHIGURE_NAMING_COMPATIBILITY.md`.
+
 If you do not want a venv, you can also run with `PYTHONPATH=.`:
 
 ```bash
-cd /opt/open-edr-mdr-agent
+cd /opt/shigure
 PYTHONPATH=. python3 -m open_edr_mdr_agent.cli init-sample-data
 PYTHONPATH=. python3 -m open_edr_mdr_agent.cli alerts
 ```

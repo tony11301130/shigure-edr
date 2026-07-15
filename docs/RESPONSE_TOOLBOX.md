@@ -1,10 +1,12 @@
-# Response Toolbox
+# Shigure Response Toolbox
 
-The endpoint agent is designed to run as a Windows Service. When installed from an elevated PowerShell prompt with the default `--install-service` path, Windows creates the service without an explicit `obj=` account, so the service runs as `LocalSystem`.
+The Shigure endpoint agent is designed to run as a Windows Service. When installed from an elevated PowerShell prompt with the default `--install-service` path, Windows creates the service without an explicit `obj=` account, so the service runs as `LocalSystem`.
 
 This gives the agent enough local authority to collect investigation evidence after the server queues a task. Under the MVP `read_only_v1` policy, the agent does not execute high-risk or mutating response actions even if they are accidentally dispatched.
 
 ## Deploy as LocalSystem
+
+The command and path examples below still use Shiori compatibility names for the current runtime defaults. Product-facing language should call the product Shigure; #17 owns the coherent runtime service, binary, package, install path, and data path migration.
 
 ```powershell
 .\shiori-agent.exe --install-service --server http://192.168.1.93:8765 --enroll-token <token>
