@@ -12,7 +12,15 @@ from urllib.parse import urlparse
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 
-from open_edr_mdr_agent.api.cases import CaseCreateRequest, CaseEvidenceRecord, CaseEvidenceRequest, CaseRecord, CaseUpdateRequest
+from open_edr_mdr_agent.api.cases import (
+    CaseCreateRequest,
+    CaseEvidenceRecord,
+    CaseEvidenceRequest,
+    CaseRecord,
+    CaseUpdateRequest,
+    TaskEvidenceAttachRequest,
+    WorkspaceStartRequest,
+)
 from open_edr_mdr_agent.api.evidence import EvidenceError
 from open_edr_mdr_agent.api.hunts import HuntCreateRequest, HuntRecord, HuntRunRecord, HuntUpdateRequest
 from open_edr_mdr_agent.api.models import (
@@ -335,7 +343,7 @@ def create_app(
         events = store.list_events(tenant_id, indicator=indicator, limit=limit)
         alerts = [a for a in store.list_alerts(tenant_id, limit=limit) if indicator.lower() in a.model_dump_json().lower()]
         hosts = sorted({e.host for e in events if e.host} | {a.host for a in alerts if a.host})
-        return {"tenant_id": tenant_id, "indicator": indicator, "hosts": hosts, "events": events, "alerts": alerts[:limit]}
+        return {"tenant_id": tenant_id, "indicator": indicator, "hosts": hosts, "summary": _hunt_summary([indicator], events, alerts[:limit]), "events": events, "alerts": alerts[:limit]}
 
     @app.post("/api/v1/admin/hunts", response_model=HuntRecord)
     def create_saved_hunt(req: HuntCreateRequest, _admin=Depends(_admin_auth)):
@@ -382,7 +390,18 @@ def create_app(
         if indicator:
             alerts = [a for a in store.list_alerts(tenant_id, limit=limit) if str(indicator).lower() in a.model_dump_json().lower()]
         hosts = sorted({e.host for e in events if e.host} | {a.host for a in alerts if a.host})
-        result = {"hunt_id": hunt_id, "name": hunt.name, "indicator": indicator, "query": query, "hosts": hosts, "event_count": len(events), "alert_count": len(alerts), "events": [e.model_dump(mode="json") for e in events[:limit]], "alerts": [a.model_dump(mode="json") for a in alerts[:limit]]}
+        result = {
+            "hunt_id": hunt_id,
+            "name": hunt.name,
+            "indicator": indicator,
+            "query": query,
+            "hosts": hosts,
+            "event_count": len(events),
+            "alert_count": len(alerts),
+            "summary": _hunt_summary([indicator] if indicator else [], events, alerts[:limit]),
+            "events": [e.model_dump(mode="json") for e in events[:limit]],
+            "alerts": [a.model_dump(mode="json") for a in alerts[:limit]],
+        }
         return store.record_hunt_run(tenant_id, hunt_id, "succeeded", result)
 
     @app.get("/api/v1/admin/hunts/{hunt_id}/runs", response_model=list[HuntRunRecord])
@@ -393,81 +412,10 @@ def create_app(
 
     @app.get("/api/v1/admin/investigate/process-graph")
     def process_graph(process_entity_id: str, host: Optional[str] = None, tenant_id: str = Query("default"), limit: int = 500, _admin=Depends(_admin_auth)):
-        events = store.list_events(tenant_id, host=host, limit=limit)
-        ordered = sorted(events, key=lambda event: event.timestamp)
-        process_events = [event for event in ordered if event.process_entity_id and event.event_type.value.startswith("process_")]
-        by_entity: dict[str, NormalizedEvent] = {}
-        for event in process_events:
-            if event.event_type.value == "process_start" or event.process_entity_id not in by_entity:
-                by_entity[event.process_entity_id] = event
-        target = by_entity.get(process_entity_id)
-        if not target:
+        graph = _build_process_graph(store, tenant_id, process_entity_id, host=host, limit=limit)
+        if not graph:
             raise HTTPException(status_code=404, detail="process_entity_not_found")
-
-        ancestors: list[NormalizedEvent] = []
-        gaps: list[dict[str, Any]] = []
-        seen = {process_entity_id}
-        current = target
-        while current.parent_process_entity_id:
-            parent_id = current.parent_process_entity_id
-            parent = by_entity.get(parent_id)
-            if not parent or parent_id in seen:
-                break
-            ancestors.append(parent)
-            seen.add(parent_id)
-            current = parent
-        _append_process_gap(gaps, target, by_entity)
-        for ancestor in ancestors:
-            _append_process_gap(gaps, ancestor, by_entity)
-
-        children_by_parent: dict[str, list[NormalizedEvent]] = {}
-        for event in process_events:
-            if event.parent_process_entity_id:
-                children_by_parent.setdefault(event.parent_process_entity_id, []).append(event)
-        descendants: list[NormalizedEvent] = []
-        descendant_seen: set[str] = set()
-
-        def visit_descendants(entity_id: str) -> None:
-            for child in children_by_parent.get(entity_id, []):
-                if not child.process_entity_id or child.process_entity_id in descendant_seen:
-                    continue
-                descendant_seen.add(child.process_entity_id)
-                descendants.append(child)
-                _append_process_gap(gaps, child, by_entity)
-                visit_descendants(child.process_entity_id)
-
-        visit_descendants(process_entity_id)
-        graph_entities = {process_entity_id} | {event.process_entity_id for event in descendants if event.process_entity_id}
-        timeline = [
-            event
-            for event in ordered
-            if event.process_entity_id in graph_entities or event.parent_process_entity_id in graph_entities
-        ]
-        evidence = [
-            {
-                "kind": "event",
-                "event_id": event.id,
-                "event_type": event.event_type.value,
-                "process_entity_id": event.process_entity_id,
-                "raw_ref": event.raw_ref,
-                "raw_hash": event.raw_hash,
-            }
-            for event in timeline
-            if event.raw_ref
-        ]
-        return {
-            "tenant_id": tenant_id,
-            "host": host or target.host,
-            "identity_mode": "process_entity",
-            "process_entity_id": process_entity_id,
-            "process": target,
-            "ancestors": ancestors,
-            "descendants": descendants,
-            "timeline": timeline,
-            "evidence": evidence,
-            "gaps": gaps,
-            "deprecated_compat_endpoint": "/api/v1/admin/investigate/process-chain",
-        }
+        return graph
 
     @app.get("/api/v1/admin/investigate/process-chain")
     def process_chain(host: str, process_id: Optional[str] = None, process_entity_id: Optional[str] = None, tenant_id: str = Query("default"), limit: int = 500, _admin=Depends(_admin_auth)):
@@ -541,6 +489,61 @@ def create_app(
         remotes = sorted({f"{e.remote_ip}:{e.remote_port}" for e in events if e.remote_ip})
         return {"tenant_id": tenant_id, "host": host, "process_id": process_id, "process_entity_id": process_entity_id, "remote_ip": remote_ip, "remotes": remotes, "events": events}
 
+    @app.post("/api/v1/admin/investigate/workspace/start")
+    def start_investigation_workspace(req: WorkspaceStartRequest, _admin=Depends(_admin_auth)):
+        alert = store.get_alert(req.tenant_id, req.alert_id)
+        if not alert:
+            raise HTTPException(status_code=404, detail="alert_not_found")
+        case = store.get_case_by_alert(req.tenant_id, req.alert_id)
+        if not case:
+            case = store.create_case(
+                req.tenant_id,
+                f"Investigate: {alert.title}",
+                alert.severity.value,
+                alert_id=req.alert_id,
+                description=alert.description,
+                priority=req.priority or alert.severity.value,
+                classification="unclassified",
+            )
+        case = store.update_case(req.tenant_id, case.case_id, status="investigating", assignee=req.assignee, priority=req.priority or case.priority) or case
+        workspace = _build_workspace_package(store, req.tenant_id, alert, case)
+        workspace["workflow"] = {
+            "status": case.status,
+            "assignee": case.assignee,
+            "priority": case.priority,
+            "classification": case.classification,
+            "case_link": f"/api/v1/admin/cases/{case.case_id}",
+            "handoff_link": f"/api/v1/admin/cases/{case.case_id}/handoff",
+        }
+        return workspace
+
+    @app.post("/api/v1/admin/investigate/workspace/attach-task-evidence", response_model=CaseEvidenceRecord)
+    def attach_workspace_task_evidence(req: TaskEvidenceAttachRequest, _admin=Depends(_admin_auth)):
+        task = store.get_task(req.tenant_id, req.task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="task_not_found")
+        if not task.raw_ref:
+            raise HTTPException(status_code=400, detail="task_has_no_raw_evidence")
+        if task.args.get("case_id") and task.args.get("case_id") != req.case_id:
+            raise HTTPException(status_code=400, detail="task_case_mismatch")
+        data = {
+            "raw_ref": task.raw_ref,
+            "raw_hash": task.raw_hash,
+            "size": (task.result or {}).get("size"),
+            "path": (task.result or {}).get("path") or task.args.get("path"),
+            "task_type": task.task_type,
+            "status": task.status,
+            "audit": {
+                "reason": task.args.get("reason"),
+                "case_id": task.args.get("case_id"),
+                "requested_by": (task.result or {}).get("requested_by"),
+            },
+        }
+        try:
+            return store.add_case_evidence(req.tenant_id, req.case_id, "task_result", req.task_id, req.summary, data)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @app.post("/api/v1/admin/cases", response_model=CaseRecord)
     def create_case(req: CaseCreateRequest, _admin=Depends(_admin_auth)):
         try:
@@ -561,7 +564,15 @@ def create_app(
 
     @app.patch("/api/v1/admin/cases/{case_id}", response_model=CaseRecord)
     def update_case(case_id: str, req: CaseUpdateRequest, tenant_id: str = "default", _admin=Depends(_admin_auth)):
-        case = store.update_case(tenant_id, case_id, status=req.status, assignee=req.assignee, summary=req.summary)
+        case = store.update_case(
+            tenant_id,
+            case_id,
+            status=req.status,
+            assignee=req.assignee,
+            summary=req.summary,
+            priority=req.priority,
+            classification=req.classification,
+        )
         if not case:
             raise HTTPException(status_code=404, detail="case_not_found")
         return case
@@ -572,6 +583,28 @@ def create_app(
             return store.add_case_evidence(tenant_id, case_id, req.evidence_type, req.ref_id, req.summary, req.data)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/v1/admin/cases/{case_id}/handoff")
+    def case_handoff(case_id: str, tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):
+        case = store.get_case(tenant_id, case_id)
+        if not case:
+            raise HTTPException(status_code=404, detail="case_not_found")
+        evidence = store.list_case_evidence(tenant_id, case_id)
+        alert = store.get_alert(tenant_id, case.alert_id) if case.alert_id else None
+        source_event = _source_event_for_alert(store, tenant_id, alert) if alert else None
+        timeline = _related_timeline(store, tenant_id, source_event, host=alert.host if alert else None)
+        raw_refs = _raw_refs_from_case_evidence(evidence)
+        return {
+            "tenant_id": tenant_id,
+            "case": case,
+            "alert": alert,
+            "summary": case.summary,
+            "timeline": timeline,
+            "evidence": evidence,
+            "raw_evidence_refs": raw_refs,
+            "hunt": _hunt_package(store, tenant_id, timeline, alert),
+            "handoff": {"format": "json", "case_link": f"/api/v1/admin/cases/{case_id}", "generated_at": datetime.now(timezone.utc)},
+        }
 
     @app.get("/api/v1/admin/config", response_model=AgentConfig)
     def get_config(tenant_id: str = "default", _admin=Depends(_admin_auth)):
@@ -736,6 +769,195 @@ Run from elevated PowerShell:
     return app
 
 
+def _build_workspace_package(store: SQLiteStore, tenant_id: str, alert: Alert, case: CaseRecord) -> dict[str, Any]:
+    source_event = _source_event_for_alert(store, tenant_id, alert)
+    timeline = _related_timeline(store, tenant_id, source_event, host=alert.host)
+    process_graph = None
+    if source_event and source_event.process_entity_id:
+        process_graph = _build_process_graph(store, tenant_id, source_event.process_entity_id, host=source_event.host)
+    endpoint_context = _endpoint_context_package(store, tenant_id, alert.host)
+    return {
+        "tenant_id": tenant_id,
+        "alert": alert,
+        "case": case,
+        "endpoint_context": endpoint_context,
+        "process_graph": process_graph,
+        "related_timeline": timeline,
+        "hunt": _hunt_package(store, tenant_id, timeline, alert),
+        "tasks": endpoint_context["recent_tasks"],
+        "evidence_links": store.list_case_evidence(tenant_id, case.case_id),
+    }
+
+
+def _source_event_for_alert(store: SQLiteStore, tenant_id: str, alert: Alert | None) -> NormalizedEvent | None:
+    if not alert:
+        return None
+    event_id = (alert.raw or {}).get("event_id")
+    if not event_id:
+        return None
+    return store.get_event(tenant_id, str(event_id))
+
+
+def _endpoint_context_package(store: SQLiteStore, tenant_id: str, host: str | None) -> dict[str, Any]:
+    agents = [agent for agent in store.list_agents(tenant_id) if not host or agent.get("host") == host]
+    agent_ids = {agent.get("agent_id") for agent in agents}
+    return {
+        "tenant_id": tenant_id,
+        "host": host,
+        "agents": agents,
+        "recent_events": store.list_events(tenant_id, host=host, limit=50) if host else [],
+        "recent_alerts": [alert for alert in store.list_alerts(tenant_id, limit=100) if not host or alert.host == host][:20],
+        "recent_tasks": [task for task in store.list_tasks(tenant_id, limit=100) if not agent_ids or task.agent_id in agent_ids][:20],
+    }
+
+
+def _related_timeline(store: SQLiteStore, tenant_id: str, source_event: NormalizedEvent | None, *, host: str | None) -> list[NormalizedEvent]:
+    if source_event and source_event.process_entity_id:
+        return store.related_events(tenant_id, entity_type="process_entity_id", value=source_event.process_entity_id, limit=100)
+    if source_event and source_event.process_id:
+        return store.related_events(tenant_id, entity_type="process_id", value=source_event.process_id, limit=100)
+    return store.list_events(tenant_id, host=host, limit=100) if host else []
+
+
+def _hunt_package(store: SQLiteStore, tenant_id: str, timeline: list[NormalizedEvent], alert: Alert | None) -> dict[str, Any]:
+    indicators = _timeline_indicators(timeline)
+    events: list[NormalizedEvent] = []
+    alerts: list[Alert] = []
+    seen_event_ids: set[str] = set()
+    seen_alert_ids: set[str] = set()
+    for indicator in indicators:
+        for event in store.list_events(tenant_id, indicator=indicator, limit=100):
+            if event.id not in seen_event_ids:
+                seen_event_ids.add(event.id)
+                events.append(event)
+        for candidate in store.list_alerts(tenant_id, limit=100):
+            if candidate.alert_id not in seen_alert_ids and indicator.lower() in candidate.model_dump_json().lower():
+                seen_alert_ids.add(candidate.alert_id)
+                alerts.append(candidate)
+    if alert and alert.alert_id not in seen_alert_ids:
+        alerts.append(alert)
+    summary = _hunt_summary(indicators, events, alerts)
+    return {"summary": summary, "events": events, "alerts": alerts}
+
+
+def _hunt_summary(indicators: list[str], events: list[NormalizedEvent], alerts: list[Alert]) -> dict[str, Any]:
+    timestamps = sorted(event.timestamp for event in events)
+    return {
+        "indicators": indicators,
+        "impacted_endpoints": sorted({event.host for event in events if event.host} | {alert.host for alert in alerts if alert.host}),
+        "impacted_users": sorted({event.user for event in events if event.user} | {alert.user for alert in alerts if alert.user}),
+        "first_seen": timestamps[0].isoformat() if timestamps else None,
+        "last_seen": timestamps[-1].isoformat() if timestamps else None,
+        "event_count": len(events),
+        "related_alert_count": len(alerts),
+    }
+
+
+def _timeline_indicators(timeline: list[NormalizedEvent]) -> list[str]:
+    values: set[str] = set()
+    for event in timeline:
+        for value in (event.remote_ip, event.domain, event.hash_sha256):
+            if value:
+                values.add(value)
+    return sorted(values)
+
+
+def _raw_refs_from_case_evidence(evidence: list[CaseEvidenceRecord]) -> list[dict[str, Any]]:
+    refs: list[dict[str, Any]] = []
+    for item in evidence:
+        if item.evidence_type == "raw_evidence":
+            refs.append({"raw_ref": item.ref_id, "raw_hash": item.data.get("sha256")})
+        raw_ref = item.data.get("raw_ref")
+        if raw_ref:
+            refs.append({"raw_ref": raw_ref, "raw_hash": item.data.get("raw_hash") or item.data.get("sha256")})
+    seen: set[str] = set()
+    deduped: list[dict[str, Any]] = []
+    for ref in refs:
+        if ref["raw_ref"] in seen:
+            continue
+        seen.add(ref["raw_ref"])
+        deduped.append(ref)
+    return deduped
+
+
+def _build_process_graph(store: SQLiteStore, tenant_id: str, process_entity_id: str, host: str | None = None, limit: int = 500) -> dict[str, Any] | None:
+    events = store.list_events(tenant_id, host=host, limit=limit)
+    ordered = sorted(events, key=lambda event: event.timestamp)
+    process_events = [event for event in ordered if event.process_entity_id and event.event_type.value.startswith("process_")]
+    by_entity: dict[str, NormalizedEvent] = {}
+    for event in process_events:
+        if event.event_type.value == "process_start" or event.process_entity_id not in by_entity:
+            by_entity[event.process_entity_id] = event
+    target = by_entity.get(process_entity_id)
+    if not target:
+        return None
+
+    ancestors: list[NormalizedEvent] = []
+    gaps: list[dict[str, Any]] = []
+    seen = {process_entity_id}
+    current = target
+    while current.parent_process_entity_id:
+        parent_id = current.parent_process_entity_id
+        parent = by_entity.get(parent_id)
+        if not parent or parent_id in seen:
+            break
+        ancestors.append(parent)
+        seen.add(parent_id)
+        current = parent
+    _append_process_gap(gaps, target, by_entity)
+    for ancestor in ancestors:
+        _append_process_gap(gaps, ancestor, by_entity)
+
+    children_by_parent: dict[str, list[NormalizedEvent]] = {}
+    for event in process_events:
+        if event.parent_process_entity_id:
+            children_by_parent.setdefault(event.parent_process_entity_id, []).append(event)
+    descendants: list[NormalizedEvent] = []
+    descendant_seen: set[str] = set()
+
+    def visit_descendants(entity_id: str) -> None:
+        for child in children_by_parent.get(entity_id, []):
+            if not child.process_entity_id or child.process_entity_id in descendant_seen:
+                continue
+            descendant_seen.add(child.process_entity_id)
+            descendants.append(child)
+            _append_process_gap(gaps, child, by_entity)
+            visit_descendants(child.process_entity_id)
+
+    visit_descendants(process_entity_id)
+    graph_entities = {process_entity_id} | {event.process_entity_id for event in descendants if event.process_entity_id}
+    timeline = [
+        event
+        for event in ordered
+        if event.process_entity_id in graph_entities or event.parent_process_entity_id in graph_entities
+    ]
+    evidence = [
+        {
+            "kind": "event",
+            "event_id": event.id,
+            "event_type": event.event_type.value,
+            "process_entity_id": event.process_entity_id,
+            "raw_ref": event.raw_ref,
+            "raw_hash": event.raw_hash,
+        }
+        for event in timeline
+        if event.raw_ref
+    ]
+    return {
+        "tenant_id": tenant_id,
+        "host": host or target.host,
+        "identity_mode": "process_entity",
+        "process_entity_id": process_entity_id,
+        "process": target,
+        "ancestors": ancestors,
+        "descendants": descendants,
+        "timeline": timeline,
+        "evidence": evidence,
+        "gaps": gaps,
+        "deprecated_compat_endpoint": "/api/v1/admin/investigate/process-chain",
+    }
+
+
 def _append_process_gap(gaps: list[dict[str, Any]], event: NormalizedEvent, by_entity: dict[str, NormalizedEvent]) -> None:
     if not event.missing_parent_reason:
         return
@@ -893,14 +1115,14 @@ UI_HTML = r"""
       <div class="pane-body">
         <section class="section"><h3>Selected entity</h3><div id="entityDetail" class="kv"></div></section>
         <section class="section"><h3>Recommended next steps</h3><div id="recommendedActions" class="actions"></div></section>
-        <section class="section"><h3>More actions</h3><div class="form-stack"><select id="taskAgent"></select><select id="taskType"></select><textarea id="taskArgs" placeholder='{"profile":"powershell","max_events":25}'></textarea><div class="subgrid"><button onclick="queueCustomTask()">Queue task</button><button class="secondary" onclick="presetSafeTask()">Safe preset</button></div><div id="taskStatus" class="toast"></div></div></section>
+        <section class="section"><h3>More actions</h3><div class="form-stack"><div class="subgrid"><button onclick="startWorkspace()">Start workspace</button><button class="secondary" onclick="openHandoff()">Handoff JSON</button></div><button class="ghost" onclick="attachLatestTaskEvidence()">Attach latest task evidence</button><select id="taskAgent"></select><select id="taskType"></select><textarea id="taskArgs" placeholder='{"profile":"powershell","max_events":25}'></textarea><div class="subgrid"><button onclick="queueCustomTask()">Queue task</button><button class="secondary" onclick="presetSafeTask()">Safe preset</button></div><div id="taskStatus" class="toast"></div></div></section>
       </div>
     </aside>
   </main>
 </div>
 <div class="drawer" id="deployDrawer" role="dialog" aria-modal="true" aria-labelledby="deployTitle"><div class="drawer-panel"><div class="drawer-head"><h2 id="deployTitle">Deploy Shiori Agent</h2><button class="secondary" onclick="closeDeploy()">Close</button></div><div class="form-stack"><p class="muted">Deployment is setup work, so it lives outside the investigation surface.</p><label for="serverUrl">Server URL</label><input id="serverUrl" value="http://192.168.1.93:8765"><label for="maxUses">Enrollment token max uses</label><input id="maxUses" placeholder="optional"><div class="subgrid"><button onclick="downloadPackage()">Download ZIP</button><button class="secondary" onclick="downloadConfig()">Config JSON</button></div><button class="ghost" onclick="downloadAgent()">Download agent binary</button><div id="deployStatus" class="toast"></div></div></div></div>
 <script>
-const $=id=>document.getElementById(id);let STATE={queue:'alerts',scope:'related',summary:null,agents:[],alerts:[],tasks:[],cases:[],hunts:[],evidence:[],events:[],taskCatalog:[],selectedAlert:null,selectedEndpoint:null};
+const $=id=>document.getElementById(id);let STATE={queue:'alerts',scope:'related',summary:null,agents:[],alerts:[],tasks:[],cases:[],hunts:[],evidence:[],events:[],taskCatalog:[],workspace:null,selectedAlert:null,selectedEndpoint:null};
 function tenant(){return encodeURIComponent($('tenant').value||'default')}function rawTenant(){return $('tenant').value||'default'}function headers(json=false){const h={'Authorization':'Bearer '+$('token').value};if(json)h['Content-Type']='application/json';return h}async function api(path,opts={}){opts.headers={...(opts.headers||{}),...headers(opts.json)};if(opts.json&&opts.body&&typeof opts.body!=='string')opts.body=JSON.stringify(opts.body);const r=await fetch(path,opts);if(!r.ok)throw new Error(path+' '+r.status+' '+await r.text());return await r.json()}function esc(v){return String(v??'').replace(/[&<>"']/g,s=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]))}function short(v,n=18){v=String(v||'');return v.length>n?v.slice(0,n)+'…':v}function clsSeverity(s){return String(s||'info').toLowerCase()}function fmtTime(v){if(!v)return '—';try{return new Date(v).toLocaleString()}catch{return v}}function empty(msg){return `<div class="empty">${esc(msg)}</div>`}function pill(k,v){return `<span class="pill"><span>${esc(k)}</span><strong>${esc(v||'—')}</strong></span>`}function setText(id,v){$(id).textContent=v}
 async function loadAll(){try{setText('liveText','refreshing…');const t=tenant();const [summary,agents,alerts,cases,tasks,hunts,evidence,events,catalog]=await Promise.all([api(`/api/v1/admin/summary?tenant_id=${t}`),api(`/api/v1/admin/agents?tenant_id=${t}`),api(`/api/v1/admin/alerts?tenant_id=${t}&limit=50`),api(`/api/v1/admin/cases?tenant_id=${t}&limit=25`),api(`/api/v1/admin/tasks?tenant_id=${t}&limit=50`),api(`/api/v1/admin/hunts?tenant_id=${t}&limit=25`),api(`/api/v1/admin/raw-evidence/list?tenant_id=${t}&limit=50`),api(`/api/v1/admin/events?tenant_id=${t}&limit=150`),api('/api/v1/admin/task-catalog')]);STATE.summary=summary;STATE.agents=agents.agents||[];STATE.alerts=alerts.alerts||alerts||[];STATE.cases=cases.cases||cases||[];STATE.tasks=tasks.tasks||tasks||[];STATE.hunts=hunts.hunts||hunts||[];STATE.evidence=evidence.evidence||evidence||[];STATE.events=events.events||events||[];STATE.taskCatalog=catalog.tasks||[];if(!STATE.selectedAlert&&STATE.alerts[0])selectAlert(STATE.alerts[0].alert_id,false);renderAll();setText('liveText','updated '+new Date().toLocaleTimeString())}catch(e){setText('liveText','load failed');$('queueBody').innerHTML=empty(e.message)}}
 function renderAll(){renderStatus();renderTaskSelectors();renderQueue();renderWorkspace();renderContext()}function renderStatus(){const c=(STATE.summary&&STATE.summary.counts)||{};$('statusStrip').innerHTML=[['alerts','Alerts'],['agents','Endpoints'],['tasks','Tasks'],['cases','Cases']].map(([k,l])=>`<span class="stat"><b>${esc(c[k]??0)}</b><span>${l}</span></span>`).join('')}
@@ -913,6 +1135,7 @@ function renderTimeline(){const a=STATE.selectedAlert,ep=STATE.selectedEndpoint;
 function renderContext(){const a=STATE.selectedAlert,ep=STATE.selectedEndpoint;let detail=[];if(a){detail=[['Severity',a.severity],['Host',a.host],['Process',a.process_name],['MITRE',(a.mitre||[]).join(', ')],['Time',fmtTime(a.timestamp||a.created_at)],['Alert ID',a.alert_id]]}else if(ep){detail=[['Host',ep.host],['Status',ep.status],['IP',ep.ip_address],['OS',ep.os],['Version',ep.agent_version],['Agent ID',ep.agent_id]]}else detail=[['Selection','none'],['Hint','Pick an alert']];$('entityDetail').innerHTML=detail.map(([k,v])=>`<div>${esc(k)}</div><div title="${esc(v)}">${esc(v||'—')}</div>`).join('');renderRecommendedActions()}
 function currentAgent(){return STATE.selectedEndpoint||(STATE.selectedAlert&&findAgentByHost(STATE.selectedAlert.host))||STATE.agents[0]}function renderRecommendedActions(){const a=STATE.selectedAlert;let rec=[['Collect event logs','windows_event_logs',{profile:a&&String(a.title||'').toLowerCase().includes('powershell')?'powershell':'service',max_events:25}],['Inspect processes','process_list',{}],['Network snapshot','network_connections',{}],['Persistence sweep','autoruns_collect',{}]];if(!a)rec=[['Inventory','inventory',{}],['Agent identity','agent_identity',{}],['Listening ports','listening_ports',{}]];$('recommendedActions').innerHTML=rec.map(([label,type,args])=>`<div class="action-row"><div><b>${esc(label)}</b><span>${esc(type)} ${esc(JSON.stringify(args))}</span></div><button class="secondary" onclick='queueTask("${type}",${JSON.stringify(args)})'>Run</button></div>`).join('')}
 function renderTaskSelectors(){const ep=currentAgent();const tasks=(STATE.taskCatalog||[]).map(t=>t.task_type);$('taskAgent').innerHTML=STATE.agents.map(a=>`<option value="${esc(a.agent_id)}" ${ep&&ep.agent_id===a.agent_id?'selected':''}>${esc(a.host||a.agent_id)}</option>`).join('')||'<option value="">no agent</option>';$('taskType').innerHTML=tasks.map(t=>`<option>${esc(t)}</option>`).join('')}async function queueTask(type,args){const ep=currentAgent();if(!ep)throwStatus('No endpoint selected');$('taskStatus').innerHTML='<span class="muted">queueing…</span>';try{const body={tenant_id:rawTenant(),agent_id:ep.agent_id,task_type:type,args:args||{}};const r=await api('/api/v1/admin/tasks',{method:'POST',json:true,body});$('taskStatus').innerHTML=`<span class="ok">queued ${esc(short(r.task_id,16))}</span>`;await loadAll()}catch(e){$('taskStatus').innerHTML=`<span class="error">${esc(e.message)}</span>`}}function throwStatus(msg){$('taskStatus').innerHTML=`<span class="error">${esc(msg)}</span>`;throw new Error(msg)}async function queueCustomTask(){let args={};try{args=$('taskArgs').value?JSON.parse($('taskArgs').value):{}}catch(e){return throwStatus('Invalid JSON args')}await queueTask($('taskType').value,args)}function presetSafeTask(){$('taskType').value='windows_event_logs';$('taskArgs').value=JSON.stringify({profile:'powershell',max_events:25},null,2)}
+async function startWorkspace(){const a=STATE.selectedAlert;if(!a)return throwStatus('Select an alert first');try{STATE.workspace=await api('/api/v1/admin/investigate/workspace/start',{method:'POST',json:true,body:{tenant_id:rawTenant(),alert_id:a.alert_id,priority:a.severity}});$('taskStatus').innerHTML=`<span class="ok">workspace ${esc(short(STATE.workspace.case.case_id,16))}</span>`;await loadAll()}catch(e){$('taskStatus').innerHTML=`<span class="error">${esc(e.message)}</span>`}}async function attachLatestTaskEvidence(){const w=STATE.workspace;if(!w||!w.case)return throwStatus('Start workspace first');const t=(STATE.tasks||[]).find(t=>t.raw_ref&&(!w.case.case_id||t.args.case_id===w.case.case_id))||(STATE.tasks||[]).find(t=>t.raw_ref);if(!t)return throwStatus('No completed task evidence');try{await api('/api/v1/admin/investigate/workspace/attach-task-evidence',{method:'POST',json:true,body:{tenant_id:rawTenant(),case_id:w.case.case_id,task_id:t.task_id,summary:'Attached from workspace'}});$('taskStatus').innerHTML='<span class="ok">evidence attached</span>';await loadAll()}catch(e){$('taskStatus').innerHTML=`<span class="error">${esc(e.message)}</span>`}}function openHandoff(){const w=STATE.workspace;if(!w||!w.case)return throwStatus('Start workspace first');window.open(`/api/v1/admin/cases/${encodeURIComponent(w.case.case_id)}/handoff?tenant_id=${tenant()}`,'_blank')}
 function openDeploy(){$('deployDrawer').classList.add('open')}function closeDeploy(){$('deployDrawer').classList.remove('open')}async function downloadBlob(path,filename,statusId){try{const r=await fetch(path,{headers:headers()});if(!r.ok)throw new Error(await r.text());const b=await r.blob();const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download=filename;a.click();URL.revokeObjectURL(u);$(statusId).innerHTML='<span class="ok">download started</span>'}catch(e){$(statusId).innerHTML='<span class="error">'+esc(e.message)+'</span>'}}function deploymentQuery(){const max=$('maxUses').value;return `tenant_id=${tenant()}&server_url=${encodeURIComponent($('serverUrl').value)}`+(max?`&max_uses=${encodeURIComponent(max)}`:'')}function downloadPackage(){downloadBlob('/api/v1/admin/downloads/agent/package?'+deploymentQuery(),'shiori-agent-package.zip','deployStatus')}function downloadAgent(){downloadBlob('/api/v1/admin/downloads/agent/windows','shiori-agent.exe','deployStatus')}function downloadConfig(){downloadBlob('/api/v1/admin/downloads/agent-config?'+deploymentQuery(),'shiori-agent-config.json','deployStatus')}
 loadAll();
 </script>

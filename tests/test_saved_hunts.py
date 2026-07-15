@@ -30,6 +30,11 @@ def test_saved_hunt_create_run_and_list_results(tmp_path):
     assert result["event_count"] >= 1
     assert result["alert_count"] >= 1
     assert result["hosts"] == ["HUNT01"]
+    assert result["summary"]["impacted_endpoints"] == ["HUNT01"]
+    assert result["summary"]["event_count"] >= 1
+    assert result["summary"]["related_alert_count"] >= 1
+    assert result["summary"]["first_seen"]
+    assert result["summary"]["last_seen"]
 
     runs = client.get(f"/api/v1/admin/hunts/{hunt_id}/runs", headers=ADMIN, params={"tenant_id":"default"})
     assert runs.status_code == 200

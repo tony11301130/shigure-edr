@@ -141,6 +141,8 @@ class SQLiteStore:
                     status text not null,
                     alert_id text,
                     assignee text,
+                    priority text,
+                    classification text,
                     description text,
                     summary text,
                     created_at text not null,
@@ -219,6 +221,8 @@ class SQLiteStore:
             self._ensure_column(conn, "events", "missing_parent_reason", "text")
             self._ensure_column(conn, "alerts", "raw_ref", "text")
             self._ensure_column(conn, "alerts", "raw_hash", "text")
+            self._ensure_column(conn, "cases", "priority", "text")
+            self._ensure_column(conn, "cases", "classification", "text")
             self._ensure_column(conn, "tasks", "raw_ref", "text")
             self._ensure_column(conn, "tasks", "raw_hash", "text")
             self._ensure_column(conn, "agents", "credential_version", "integer not null default 1")
@@ -679,7 +683,16 @@ class SQLiteStore:
         with self.connect() as conn:
             return [NormalizedEvent.model_validate_json(r["event_json"]) for r in conn.execute(q, args).fetchall()]
 
-    def create_case(self, tenant_id: str, title: str, severity: str, alert_id: Optional[str] = None, description: Optional[str] = None) -> CaseRecord:
+    def create_case(
+        self,
+        tenant_id: str,
+        title: str,
+        severity: str,
+        alert_id: Optional[str] = None,
+        description: Optional[str] = None,
+        priority: Optional[str] = None,
+        classification: Optional[str] = None,
+    ) -> CaseRecord:
         case_id = str(uuid4())
         now = utc_now()
         with self.connect() as conn:
@@ -689,8 +702,8 @@ class SQLiteStore:
                 if not alert:
                     raise ValueError("alert_not_found_in_tenant")
             conn.execute(
-                "insert into cases(case_id, tenant_id, title, severity, status, alert_id, description, created_at, updated_at) values (?, ?, ?, ?, 'open', ?, ?, ?, ?)",
-                (case_id, tenant_id, title, severity, alert_id, description, now, now),
+                "insert into cases(case_id, tenant_id, title, severity, status, alert_id, priority, classification, description, created_at, updated_at) values (?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)",
+                (case_id, tenant_id, title, severity, alert_id, priority, classification or "unclassified", description, now, now),
             )
             if alert:
                 conn.execute(
@@ -704,6 +717,11 @@ class SQLiteStore:
                     )
             row = conn.execute("select * from cases where case_id=?", (case_id,)).fetchone()
         return self._case_record(dict(row))
+
+    def get_case_by_alert(self, tenant_id: str, alert_id: str) -> Optional[CaseRecord]:
+        with self.connect() as conn:
+            row = conn.execute("select * from cases where tenant_id=? and alert_id=? order by updated_at desc limit 1", (tenant_id, alert_id)).fetchone()
+        return self._case_record(dict(row)) if row else None
 
     def create_hunt(self, tenant_id: str, name: str, description: Optional[str], indicator: Optional[str], query: Dict[str, Any], enabled: bool = True) -> HuntRecord:
         hunt_id = str(uuid4())
@@ -811,14 +829,32 @@ class SQLiteStore:
             row = conn.execute("select * from cases where tenant_id=? and case_id=?", (tenant_id, case_id)).fetchone()
         return self._case_record(dict(row)) if row else None
 
-    def update_case(self, tenant_id: str, case_id: str, status: Optional[str] = None, assignee: Optional[str] = None, summary: Optional[str] = None) -> Optional[CaseRecord]:
+    def update_case(
+        self,
+        tenant_id: str,
+        case_id: str,
+        status: Optional[str] = None,
+        assignee: Optional[str] = None,
+        summary: Optional[str] = None,
+        priority: Optional[str] = None,
+        classification: Optional[str] = None,
+    ) -> Optional[CaseRecord]:
         current = self.get_case(tenant_id, case_id)
         if not current:
             return None
         with self.connect() as conn:
             conn.execute(
-                "update cases set status=coalesce(?, status), assignee=coalesce(?, assignee), summary=coalesce(?, summary), updated_at=? where tenant_id=? and case_id=?",
-                (status, assignee, summary, utc_now(), tenant_id, case_id),
+                """
+                update cases
+                set status=coalesce(?, status),
+                    assignee=coalesce(?, assignee),
+                    summary=coalesce(?, summary),
+                    priority=coalesce(?, priority),
+                    classification=coalesce(?, classification),
+                    updated_at=?
+                where tenant_id=? and case_id=?
+                """,
+                (status, assignee, summary, priority, classification, utc_now(), tenant_id, case_id),
             )
             row = conn.execute("select * from cases where tenant_id=? and case_id=?", (tenant_id, case_id)).fetchone()
         return self._case_record(dict(row))
@@ -974,7 +1010,8 @@ class SQLiteStore:
     def _case_record(self, row: Dict[str, Any]) -> CaseRecord:
         return CaseRecord(
             case_id=row["case_id"], tenant_id=row["tenant_id"], title=row["title"], severity=row["severity"], status=row["status"],
-            alert_id=row.get("alert_id"), assignee=row.get("assignee"), description=row.get("description"), summary=row.get("summary"),
+            alert_id=row.get("alert_id"), assignee=row.get("assignee"), priority=row.get("priority"), classification=row.get("classification") or "unclassified",
+            description=row.get("description"), summary=row.get("summary"),
             created_at=datetime.fromisoformat(row["created_at"]), updated_at=datetime.fromisoformat(row["updated_at"]),
         )
 

@@ -29,6 +29,12 @@ def test_investigation_hunt_context_and_process_chain(tmp_path):
     assert hunt.status_code == 200
     assert hunt.json()["hosts"] == ["INV01"]
     assert len(hunt.json()["events"]) == 1
+    assert hunt.json()["summary"]["impacted_endpoints"] == ["INV01"]
+    assert hunt.json()["summary"]["impacted_users"] == []
+    assert hunt.json()["summary"]["event_count"] == 1
+    assert hunt.json()["summary"]["related_alert_count"] >= 1
+    assert hunt.json()["summary"]["first_seen"]
+    assert hunt.json()["summary"]["last_seen"]
 
     context = client.get("/api/v1/admin/investigate/endpoint-context", headers=ADMIN, params={"tenant_id":"default", "host":"INV01"})
     assert context.status_code == 200

@@ -25,6 +25,22 @@ class CaseUpdateRequest(BaseModel):
     status: Optional[str] = None
     assignee: Optional[str] = None
     summary: Optional[str] = None
+    priority: Optional[str] = None
+    classification: Optional[str] = None
+
+
+class WorkspaceStartRequest(BaseModel):
+    tenant_id: str = "default"
+    alert_id: str
+    assignee: Optional[str] = None
+    priority: Optional[str] = None
+
+
+class TaskEvidenceAttachRequest(BaseModel):
+    tenant_id: str = "default"
+    case_id: str
+    task_id: str
+    summary: Optional[str] = None
 
 
 class CaseRecord(BaseModel):
@@ -35,6 +51,8 @@ class CaseRecord(BaseModel):
     status: str
     alert_id: Optional[str] = None
     assignee: Optional[str] = None
+    priority: Optional[str] = None
+    classification: Optional[str] = None
     description: Optional[str] = None
     summary: Optional[str] = None
     created_at: datetime

@@ -11,6 +11,9 @@ def test_minimal_ui_served(tmp_path):
     assert "/api/v1/admin/summary" in res.text
     assert "/api/v1/admin/hunts" in res.text
     assert "/api/v1/admin/raw-evidence/list" in res.text
+    assert "/api/v1/admin/investigate/workspace/start" in res.text
+    assert "/api/v1/admin/investigate/workspace/attach-task-evidence" in res.text
+    assert "/handoff?tenant_id=" in res.text
 
 
 def test_root_redirects_to_ui(tmp_path):
