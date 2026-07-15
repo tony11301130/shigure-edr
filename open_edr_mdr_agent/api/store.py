@@ -13,6 +13,7 @@ from open_edr_mdr_agent.api.cases import CaseEvidenceRecord, CaseRecord
 from open_edr_mdr_agent.api.hunts import HuntRecord, HuntRunRecord
 from open_edr_mdr_agent.api.evidence import build_agent_evidence, build_raw_evidence
 from open_edr_mdr_agent.api.models import AgentConfig, AgentRecord, EvidenceUploadRequest, TaskRecord
+from open_edr_mdr_agent.api.object_storage import RawObjectStore, object_store_from_env
 from open_edr_mdr_agent.core.schemas import Alert, NormalizedEvent
 
 
@@ -21,9 +22,10 @@ def utc_now() -> str:
 
 
 class SQLiteStore:
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, raw_object_store: RawObjectStore | None = None):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.raw_object_store = raw_object_store or object_store_from_env(self.path.parent)
         self.init_schema()
 
     @contextmanager
@@ -85,7 +87,12 @@ class SQLiteStore:
                     tenant_id text not null,
                     kind text not null,
                     sha256 text not null,
-                    payload_json text not null,
+                    payload_json text not null default '',
+                    size integer,
+                    mime_type text,
+                    storage_provider text,
+                    object_key text,
+                    metadata_json text not null default '{}',
                     created_at text not null
                 );
                 create index if not exists idx_raw_evidence_tenant on raw_evidence(tenant_id, created_at);
@@ -221,6 +228,11 @@ class SQLiteStore:
             self._ensure_column(conn, "events", "missing_parent_reason", "text")
             self._ensure_column(conn, "alerts", "raw_ref", "text")
             self._ensure_column(conn, "alerts", "raw_hash", "text")
+            self._ensure_column(conn, "raw_evidence", "size", "integer")
+            self._ensure_column(conn, "raw_evidence", "mime_type", "text")
+            self._ensure_column(conn, "raw_evidence", "storage_provider", "text")
+            self._ensure_column(conn, "raw_evidence", "object_key", "text")
+            self._ensure_column(conn, "raw_evidence", "metadata_json", "text not null default '{}'")
             self._ensure_column(conn, "cases", "priority", "text")
             self._ensure_column(conn, "cases", "classification", "text")
             self._ensure_column(conn, "tasks", "raw_ref", "text")
@@ -236,6 +248,47 @@ class SQLiteStore:
         cols = {row["name"] for row in conn.execute(f"pragma table_info({table})").fetchall()}
         if column not in cols:
             conn.execute(f"alter table {table} add column {column} {ddl_type}")
+
+    def _insert_raw_evidence(
+        self,
+        conn: sqlite3.Connection,
+        raw: Any,
+        *,
+        size: int | None = None,
+        mime_type: str = "application/json",
+        metadata: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        stored = self.raw_object_store.put_json(
+            tenant_id=raw.tenant_id,
+            kind=raw.kind,
+            object_id=raw.object_id,
+            payload=raw.payload,
+            sha256=raw.sha256,
+            size=size,
+            mime_type=mime_type,
+            metadata=metadata,
+        )
+        conn.execute(
+            """
+            insert or ignore into raw_evidence(
+                raw_ref, tenant_id, kind, sha256, payload_json, size, mime_type,
+                storage_provider, object_key, metadata_json, created_at
+            ) values (?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                stored.raw_ref,
+                raw.tenant_id,
+                raw.kind,
+                raw.sha256,
+                stored.size,
+                stored.mime_type,
+                stored.storage_provider,
+                stored.object_key,
+                json.dumps(stored.metadata, sort_keys=True),
+                utc_now(),
+            ),
+        )
+        return {"raw_ref": stored.raw_ref, "sha256": raw.sha256, "size": stored.size, "storage_provider": stored.storage_provider, "object_key": stored.object_key}
 
     def get_agent_config(self, tenant_id: str = "default") -> AgentConfig:
         with self.connect() as conn:
@@ -406,47 +459,42 @@ class SQLiteStore:
 
     def insert_events(self, agent_id: str, events: Iterable[NormalizedEvent]) -> int:
         rows = []
-        raw_rows = []
         now_dt = datetime.now(timezone.utc)
-        for event in events:
-            event.ingested_at = event.ingested_at or now_dt
-            raw = build_raw_evidence(event.tenant_id, "event", event.id, event.raw)
-            event.raw_ref = event.raw_ref or raw.raw_ref
-            event.raw_hash = event.raw_hash or raw.sha256
-            raw_rows.append((event.raw_ref, event.tenant_id, "event", event.raw_hash, raw.payload_json, utc_now()))
-            rows.append((
-                event.id,
-                event.tenant_id,
-                agent_id,
-                event.host,
-                event.event_type.value,
-                event.source.value,
-                event.timestamp.isoformat(),
-                event.process_name,
-                event.process_id,
-                event.process_entity_id,
-                event.parent_process_entity_id,
-                event.boot_id,
-                event.process_create_time,
-                event.process_exit_time,
-                event.image_path,
-                event.image_hash,
-                event.process_identity_confidence,
-                event.missing_parent_reason,
-                event.command_line,
-                event.user,
-                event.hash_sha256,
-                event.remote_ip,
-                event.domain,
-                event.raw_ref,
-                event.raw_hash,
-                event.model_dump_json(),
-            ))
         with self.connect() as conn:
-            conn.executemany(
-                "insert or ignore into raw_evidence(raw_ref, tenant_id, kind, sha256, payload_json, created_at) values (?, ?, ?, ?, ?, ?)",
-                raw_rows,
-            )
+            for event in events:
+                event.ingested_at = event.ingested_at or now_dt
+                raw = build_raw_evidence(event.tenant_id, "event", event.id, event.raw)
+                stored = self._insert_raw_evidence(conn, raw, metadata={"agent_id": agent_id, "event_id": event.id})
+                event.raw_ref = stored["raw_ref"]
+                event.raw_hash = raw.sha256
+                rows.append((
+                    event.id,
+                    event.tenant_id,
+                    agent_id,
+                    event.host,
+                    event.event_type.value,
+                    event.source.value,
+                    event.timestamp.isoformat(),
+                    event.process_name,
+                    event.process_id,
+                    event.process_entity_id,
+                    event.parent_process_entity_id,
+                    event.boot_id,
+                    event.process_create_time,
+                    event.process_exit_time,
+                    event.image_path,
+                    event.image_hash,
+                    event.process_identity_confidence,
+                    event.missing_parent_reason,
+                    event.command_line,
+                    event.user,
+                    event.hash_sha256,
+                    event.remote_ip,
+                    event.domain,
+                    event.raw_ref,
+                    event.raw_hash,
+                    event.model_dump_json(),
+                ))
             conn.executemany(
                 "insert or ignore into events(id, tenant_id, agent_id, host, event_type, source, timestamp, process_name, process_id, process_entity_id, parent_process_entity_id, boot_id, process_create_time, process_exit_time, image_path, image_hash, process_identity_confidence, missing_parent_reason, command_line, user, hash_sha256, remote_ip, domain, raw_ref, raw_hash, event_json) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rows,
@@ -455,21 +503,16 @@ class SQLiteStore:
 
     def insert_alerts(self, alerts: Iterable[Alert]) -> int:
         rows = []
-        raw_rows = []
         now_dt = datetime.now(timezone.utc)
-        for alert in alerts:
-            tenant_id = str((alert.raw or {}).get("tenant_id") or "default")
-            alert.created_at = alert.created_at or now_dt
-            raw = build_raw_evidence(tenant_id, "alert", alert.alert_id, alert.raw)
-            alert.raw_ref = alert.raw_ref or raw.raw_ref
-            alert.raw_hash = alert.raw_hash or raw.sha256
-            raw_rows.append((alert.raw_ref, tenant_id, "alert", alert.raw_hash, raw.payload_json, utc_now()))
-            rows.append((alert.alert_id, tenant_id, alert.title, alert.severity.value, alert.timestamp.isoformat(), alert.host, alert.user, alert.process_name, alert.raw_ref, alert.raw_hash, alert.model_dump_json()))
         with self.connect() as conn:
-            conn.executemany(
-                "insert or ignore into raw_evidence(raw_ref, tenant_id, kind, sha256, payload_json, created_at) values (?, ?, ?, ?, ?, ?)",
-                raw_rows,
-            )
+            for alert in alerts:
+                tenant_id = str((alert.raw or {}).get("tenant_id") or "default")
+                alert.created_at = alert.created_at or now_dt
+                raw = build_raw_evidence(tenant_id, "alert", alert.alert_id, alert.raw)
+                stored = self._insert_raw_evidence(conn, raw, metadata={"alert_id": alert.alert_id})
+                alert.raw_ref = stored["raw_ref"]
+                alert.raw_hash = raw.sha256
+                rows.append((alert.alert_id, tenant_id, alert.title, alert.severity.value, alert.timestamp.isoformat(), alert.host, alert.user, alert.process_name, alert.raw_ref, alert.raw_hash, alert.model_dump_json()))
             conn.executemany(
                 "insert or ignore into alerts(alert_id, tenant_id, title, severity, timestamp, host, user, process_name, raw_ref, raw_hash, alert_json) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rows,
@@ -523,23 +566,17 @@ class SQLiteStore:
         raw_payload = {"task_id": task_id, "agent_id": agent_id, "status": status, "result": merged_result, "error": error}
         raw = build_raw_evidence(tenant_id, "task_result", task_id, raw_payload)
         with self.connect() as conn:
-            conn.execute(
-                "insert or ignore into raw_evidence(raw_ref, tenant_id, kind, sha256, payload_json, created_at) values (?, ?, ?, ?, ?, ?)",
-                (raw.raw_ref, raw.tenant_id, raw.kind, raw.sha256, raw.payload_json, utc_now()),
-            )
+            stored = self._insert_raw_evidence(conn, raw, metadata={"task_id": task_id, "agent_id": agent_id, **(merged_result or {})})
             conn.execute(
                 "update tasks set status=?, completed_at=?, result_json=?, error=?, raw_ref=?, raw_hash=? where tenant_id=? and agent_id=? and task_id=?",
-                (status, utc_now(), json.dumps(merged_result), error, raw.raw_ref, raw.sha256, tenant_id, agent_id, task_id),
+                (status, utc_now(), json.dumps(merged_result), error, stored["raw_ref"], raw.sha256, tenant_id, agent_id, task_id),
             )
 
     def store_agent_evidence(self, tenant_id: str, agent_id: str, req: EvidenceUploadRequest) -> Dict[str, Any]:
         raw = build_agent_evidence(tenant_id, agent_id, req)
         with self.connect() as conn:
-            conn.execute(
-                "insert or ignore into raw_evidence(raw_ref, tenant_id, kind, sha256, payload_json, created_at) values (?, ?, ?, ?, ?, ?)",
-                (raw.raw_ref, raw.tenant_id, raw.kind, raw.sha256, raw.payload_json, utc_now()),
-            )
-        return {"raw_ref": raw.raw_ref, "sha256": raw.sha256, "size": req.size}
+            stored = self._insert_raw_evidence(conn, raw, size=req.size, metadata={"agent_id": agent_id, **dict(req.metadata or {})})
+        return {"raw_ref": stored["raw_ref"], "sha256": raw.sha256, "size": req.size}
 
     def expire_stale_tasks(self, tenant_id: str) -> int:
         now = datetime.now(timezone.utc)
@@ -711,9 +748,15 @@ class SQLiteStore:
                     (str(uuid4()), case_id, tenant_id, "alert", alert["alert_id"], "Source alert", json.dumps({"raw_ref": alert["raw_ref"], "raw_hash": alert["raw_hash"]}), now),
                 )
                 if alert["raw_ref"]:
+                    raw_row = conn.execute("select * from raw_evidence where tenant_id=? and raw_ref=?", (tenant_id, alert["raw_ref"])).fetchone()
+                    raw_link_data = {"kind": "alert", "sha256": alert["raw_hash"], "raw_hash": alert["raw_hash"]}
+                    if raw_row:
+                        raw_link_data.update(self._raw_evidence_metadata(dict(raw_row)))
+                        raw_link_data["sha256"] = alert["raw_hash"]
+                        raw_link_data["raw_hash"] = alert["raw_hash"]
                     conn.execute(
                         "insert into case_evidence(evidence_id, case_id, tenant_id, evidence_type, ref_id, summary, data_json, created_at) values (?, ?, ?, ?, ?, ?, ?, ?)",
-                        (str(uuid4()), case_id, tenant_id, "raw_evidence", alert["raw_ref"], "Source alert raw evidence", json.dumps({"kind": "alert", "sha256": alert["raw_hash"]}), now),
+                        (str(uuid4()), case_id, tenant_id, "raw_evidence", alert["raw_ref"], "Source alert raw evidence", json.dumps(raw_link_data), now),
                     )
             row = conn.execute("select * from cases where case_id=?", (case_id,)).fetchone()
         return self._case_record(dict(row))
@@ -881,8 +924,8 @@ class SQLiteStore:
             row = conn.execute("select * from raw_evidence where tenant_id=? and raw_ref=?", (tenant_id, raw_ref)).fetchone()
         if not row:
             return None
-        data = dict(row)
-        data["payload"] = json.loads(data.pop("payload_json"))
+        data = self._raw_evidence_metadata(dict(row))
+        data["payload"] = self._raw_evidence_payload(dict(row))
         return data
 
     def get_raw_evidence_by_hash(self, tenant_id: str, sha256: str) -> Optional[Dict[str, Any]]:
@@ -890,12 +933,12 @@ class SQLiteStore:
             row = conn.execute("select * from raw_evidence where tenant_id=? and sha256=? order by created_at desc limit 1", (tenant_id, sha256)).fetchone()
         if not row:
             return None
-        data = dict(row)
-        data["payload"] = json.loads(data.pop("payload_json"))
+        data = self._raw_evidence_metadata(dict(row))
+        data["payload"] = self._raw_evidence_payload(dict(row))
         return data
 
     def list_raw_evidence(self, tenant_id: str, kind: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
-        q = "select raw_ref, tenant_id, kind, sha256, created_at from raw_evidence where tenant_id=?"
+        q = "select raw_ref, tenant_id, kind, sha256, size, mime_type, storage_provider, object_key, metadata_json, created_at from raw_evidence where tenant_id=?"
         args: list[Any] = [tenant_id]
         if kind:
             q += " and kind=?"
@@ -903,7 +946,25 @@ class SQLiteStore:
         q += " order by created_at desc limit ?"
         args.append(limit)
         with self.connect() as conn:
-            return [dict(row) for row in conn.execute(q, args).fetchall()]
+            return [self._raw_evidence_metadata(dict(row)) for row in conn.execute(q, args).fetchall()]
+
+    def raw_object_storage_config(self) -> Dict[str, Any]:
+        return {
+            "storage_provider": self.raw_object_store.storage_provider,
+            "bucket": self.raw_object_store.bucket,
+            "endpoint_url": getattr(self.raw_object_store, "endpoint_url", None),
+            "raw_ref_scheme": getattr(self.raw_object_store, "ref_scheme", None),
+        }
+
+    def _raw_evidence_metadata(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        data = {key: value for key, value in row.items() if key != "payload_json"}
+        data["metadata"] = json.loads(data.pop("metadata_json", "{}") or "{}")
+        return data
+
+    def _raw_evidence_payload(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        if row.get("storage_provider") and row.get("object_key"):
+            return self.raw_object_store.get_json(row["raw_ref"])
+        return json.loads(row.get("payload_json") or "{}")
 
     def list_tasks(self, tenant_id: str, agent_id: Optional[str] = None, status: Optional[str] = None, limit: int = 100) -> List[TaskRecord]:
         q = "select * from tasks where tenant_id=?"

@@ -136,7 +136,7 @@ def test_mdr_workspace_runs_alert_to_handoff_loop(tmp_path):
     assert attached.status_code == 200, attached.text
     evidence = attached.json()
     assert evidence["evidence_type"] == "task_result"
-    assert evidence["data"]["raw_ref"].startswith("sqlite://raw_evidence/default/task_result/")
+    assert evidence["data"]["raw_ref"].startswith("object://raw-evidence/default/task_result/")
     assert evidence["data"]["raw_hash"]
     assert evidence["data"]["size"] == 512
     assert evidence["data"]["audit"]["reason"] == "triage"
@@ -158,4 +158,5 @@ def test_mdr_workspace_runs_alert_to_handoff_loop(tmp_path):
     assert export["summary"] == "Encoded PowerShell staged outbound C2-like traffic."
     assert {item["evidence_type"] for item in export["evidence"]} >= {"alert", "raw_evidence", "task_result"}
     assert export["raw_evidence_refs"]
+    assert all(item["raw_hash"] for item in export["raw_evidence_refs"])
     assert export["handoff"]["format"] == "json"

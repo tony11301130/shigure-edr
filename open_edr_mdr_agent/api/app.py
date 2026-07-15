@@ -330,6 +330,10 @@ def create_app(
             raise HTTPException(status_code=404, detail="raw_evidence_not_found")
         return evidence
 
+    @app.get("/api/v1/admin/raw-evidence/storage-config")
+    def raw_evidence_storage_config(_admin=Depends(_admin_auth)):
+        return store.raw_object_storage_config()
+
     @app.get("/api/v1/admin/investigate/endpoint-context")
     def endpoint_context(host: str, tenant_id: str = Query("default"), _admin=Depends(_admin_auth)):
         agents = [a for a in store.list_agents(tenant_id) if a.get("host") == host]
@@ -866,7 +870,7 @@ def _raw_refs_from_case_evidence(evidence: list[CaseEvidenceRecord]) -> list[dic
     refs: list[dict[str, Any]] = []
     for item in evidence:
         if item.evidence_type == "raw_evidence":
-            refs.append({"raw_ref": item.ref_id, "raw_hash": item.data.get("sha256")})
+            refs.append({"raw_ref": item.ref_id, "raw_hash": item.data.get("raw_hash") or item.data.get("sha256")})
         raw_ref = item.data.get("raw_ref")
         if raw_ref:
             refs.append({"raw_ref": raw_ref, "raw_hash": item.data.get("raw_hash") or item.data.get("sha256")})

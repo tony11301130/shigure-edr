@@ -17,6 +17,7 @@ class RawEvidenceRecord:
     raw_ref: str
     tenant_id: str
     kind: str
+    object_id: str
     sha256: str
     payload_json: str
 
@@ -34,7 +35,7 @@ def build_raw_evidence(tenant_id: str, kind: str, object_id: str, payload: Mappi
     payload_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
     safe_object_id = str(object_id).replace("/", "_").replace(":", "_")
     raw_ref = f"sqlite://raw_evidence/{tenant_id}/{kind}/{safe_object_id}/{payload_hash[:16]}"
-    return RawEvidenceRecord(raw_ref=raw_ref, tenant_id=tenant_id, kind=kind, sha256=(sha256 or payload_hash).lower(), payload_json=payload_json)
+    return RawEvidenceRecord(raw_ref=raw_ref, tenant_id=tenant_id, kind=kind, object_id=safe_object_id, sha256=(sha256 or payload_hash).lower(), payload_json=payload_json)
 
 
 def build_agent_evidence(tenant_id: str, agent_id: str, req: Any) -> RawEvidenceRecord:

@@ -53,7 +53,7 @@ def test_process_graph_api_returns_entity_first_graph_timeline_and_evidence(tmp_
     evidence = body["evidence"]
     assert {item["kind"] for item in evidence} == {"event"}
     assert {item["event_type"] for item in evidence} >= {"network_connection", "file_event"}
-    assert all(item["raw_ref"].startswith("sqlite://raw_evidence/default/event/") for item in evidence)
+    assert all(item["raw_ref"].startswith("object://raw-evidence/default/event/") for item in evidence)
 
     compat_chain = client.get(
         "/api/v1/admin/investigate/process-chain",
