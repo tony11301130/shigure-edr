@@ -49,6 +49,7 @@ Blocking findings include:
 - Unaudited evidence.
 - Missing MDR workflow steps.
 - Missing Windows runtime validation.
+- Missing Windows service upgrade, rollback, repair, signature, or checksum evidence.
 - Unbounded spool behavior.
 - Production dev-token or HTTP shortcuts.
 
@@ -57,6 +58,8 @@ Blocking findings include:
 The automated harness cannot replace Windows runtime validation. Release evidence must include:
 
 - Windows service lifecycle validation.
+- Windows artifact signature/checksum validation.
+- Manual or RMM upgrade/rollback validation.
 - ETW process collector lab validation.
 - Windows Event Log subscription lab validation.
 - Storage/load/retention validation.
@@ -64,6 +67,7 @@ The automated harness cannot replace Windows runtime validation. Release evidenc
 Relevant lab documents:
 
 - `docs/WINDOWS_RELEASE_LAB.md`
+- `docs/WINDOWS_SIGNED_RELEASE_PATH.md`
 - `docs/WINDOWS_ETW_PROCESS_LAB.md`
 - `docs/WINDOWS_EVENT_LOG_SUBSCRIPTION_LAB.md`
 - `docs/LOAD_TESTING.md`

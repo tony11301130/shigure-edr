@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -108,6 +109,27 @@ func TestServiceArgsUseConfigPathInsteadOfEnrollmentTokenWhenConfigured(t *testi
 	}
 	if strings.Contains(joined, "--enroll-token") || strings.Contains(joined, opts.EnrollToken) {
 		t.Fatalf("service args leaked enrollment token: %v", got)
+	}
+}
+
+func TestRuntimeDefaultsUseShigureNames(t *testing.T) {
+	if defaultServiceName != "ShigureAgent" {
+		t.Fatalf("unexpected default service name: %s", defaultServiceName)
+	}
+	if defaultServiceDisplayName != "Shigure Agent" {
+		t.Fatalf("unexpected default service display name: %s", defaultServiceDisplayName)
+	}
+	if defaultAgentFilename != "shigure-agent.exe" {
+		t.Fatalf("unexpected default agent filename: %s", defaultAgentFilename)
+	}
+	if defaultWindowsInstallDirFallback != `C:\Program Files\Shigure` {
+		t.Fatalf("unexpected install dir fallback: %s", defaultWindowsInstallDirFallback)
+	}
+	if defaultWindowsDataDirFallback != `C:\ProgramData\Shigure` {
+		t.Fatalf("unexpected data dir fallback: %s", defaultWindowsDataDirFallback)
+	}
+	if filepath.Base(defaultStatePath()) != "shigure-agent-state.json" {
+		t.Fatalf("unexpected default state path: %s", defaultStatePath())
 	}
 }
 

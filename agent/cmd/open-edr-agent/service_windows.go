@@ -13,11 +13,16 @@ import (
 	"golang.org/x/sys/windows/svc"
 )
 
-func installService(serviceName, displayName string, opts agentOptions, installDir string) error {
+func installService(serviceName, displayName string, opts agentOptions, installDir string, binaryName string) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
+	installedName := strings.TrimSpace(binaryName)
+	if installedName == "" {
+		installedName = defaultAgentFilename
+	}
+	installedName = filepath.Base(installedName)
 	if err := os.MkdirAll(installDir, 0755); err != nil {
 		return fmt.Errorf("create install dir: %w", err)
 	}
@@ -27,7 +32,7 @@ func installService(serviceName, displayName string, opts agentOptions, installD
 	if err := os.MkdirAll(filepath.Dir(opts.SpoolPath), 0700); err != nil {
 		return fmt.Errorf("create spool dir: %w", err)
 	}
-	installedExe := filepath.Join(installDir, "shiori-agent.exe")
+	installedExe := filepath.Join(installDir, installedName)
 	if !samePath(exe, installedExe) {
 		if err := copyExecutable(exe, installedExe); err != nil {
 			return err

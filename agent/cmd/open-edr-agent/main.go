@@ -23,6 +23,16 @@ import (
 
 const version = "0.1.0-dev"
 
+const (
+	defaultServiceName               = "ShigureAgent"
+	defaultServiceDisplayName        = "Shigure Agent"
+	defaultAgentFilename             = "shigure-agent.exe"
+	defaultStateFilename             = "shigure-agent-state.json"
+	defaultDataDirName               = "shigure-agent"
+	defaultWindowsInstallDirFallback = `C:\Program Files\Shigure`
+	defaultWindowsDataDirFallback    = `C:\ProgramData\Shigure`
+)
+
 var defaultSpoolLimits = spool.Limits{MaxBytes: 50 * 1024 * 1024, MaxRecords: 10000}
 
 type agentOptions struct {
@@ -59,8 +69,9 @@ func main() {
 	interval := flag.Duration("interval", 15*time.Second, "fallback loop interval before backend config is received")
 	installSvc := flag.Bool("install-service", false, "install as Windows service and exit")
 	uninstallSvc := flag.Bool("uninstall-service", false, "uninstall Windows service and exit")
-	serviceName := flag.String("service-name", "ShioriAgent", "Windows service name")
-	serviceDisplayName := flag.String("service-display-name", "Shiori Agent", "Windows service display name")
+	serviceName := flag.String("service-name", defaultServiceName, "Windows service name")
+	serviceDisplayName := flag.String("service-display-name", defaultServiceDisplayName, "Windows service display name")
+	serviceBinaryName := flag.String("service-binary-name", defaultAgentFilename, "Windows service installed binary filename")
 	installDir := flag.String("install-dir", defaultInstallDir(), "Windows service binary install directory")
 	flag.Parse()
 
@@ -73,7 +84,7 @@ func main() {
 	}
 
 	if *installSvc {
-		if err := installService(*serviceName, *serviceDisplayName, opts, *installDir); err != nil {
+		if err := installService(*serviceName, *serviceDisplayName, opts, *installDir, *serviceBinaryName); err != nil {
 			log.Fatalf("install service failed: %v", err)
 		}
 		log.Printf("service installed: %s", *serviceName)
@@ -499,9 +510,9 @@ func uploadTaskEvidence(client *agentapi.Client, s *state.State, upload map[stri
 func defaultInstallDir() string {
 	if runtime.GOOS == "windows" {
 		if programFiles := os.Getenv("ProgramFiles"); programFiles != "" {
-			return filepath.Join(programFiles, "Shiori")
+			return filepath.Join(programFiles, "Shigure")
 		}
-		return `C:\Program Files\Shiori`
+		return defaultWindowsInstallDirFallback
 	}
 	return "."
 }
@@ -509,19 +520,19 @@ func defaultInstallDir() string {
 func defaultDataDir() string {
 	if runtime.GOOS == "windows" {
 		if programData := os.Getenv("ProgramData"); programData != "" {
-			return filepath.Join(programData, "Shiori")
+			return filepath.Join(programData, "Shigure")
 		}
-		return `C:\ProgramData\Shiori`
+		return defaultWindowsDataDirFallback
 	}
 	base, err := os.UserConfigDir()
 	if err != nil {
 		base = "."
 	}
-	return filepath.Join(base, "shiori-agent")
+	return filepath.Join(base, defaultDataDirName)
 }
 
 func defaultStatePath() string {
-	return filepath.Join(defaultDataDir(), "shiori-agent-state.json")
+	return filepath.Join(defaultDataDir(), defaultStateFilename)
 }
 
 func defaultSpoolPath() string {

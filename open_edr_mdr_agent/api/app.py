@@ -652,101 +652,155 @@ def create_app(
     def create_enrollment_token(tenant_id: str = "default", max_uses: Optional[int] = None, _admin=Depends(_admin_auth)):
         return {"tenant_id": tenant_id, "token": store.create_enrollment_token(tenant_id, max_uses=max_uses)}
 
+    def _agent_naming_profile(naming: str) -> dict[str, str]:
+        normalized = naming.strip().lower()
+        if normalized in ("", "shigure"):
+            return {
+                "profile": "shigure",
+                "agent_filename": "shigure-agent.exe",
+                "config_filename": "shigure-agent-config.json",
+                "package_filename": "shigure-agent-package.zip",
+                "service_name": "ShigureAgent",
+                "service_display_name": "Shigure Agent",
+                "install_dir": "C:\\Program Files\\Shigure",
+                "data_dir": "C:\\ProgramData\\Shigure",
+                "state_filename": "shigure-agent-state.json",
+                "legacy_note": "",
+            }
+        if normalized == "shiori":
+            return {
+                "profile": "shiori",
+                "agent_filename": "shiori-agent.exe",
+                "config_filename": "shiori-agent-config.json",
+                "package_filename": "shiori-agent-package.zip",
+                "service_name": "ShioriAgent",
+                "service_display_name": "Shiori Agent",
+                "install_dir": "C:\\Program Files\\Shiori",
+                "data_dir": "C:\\ProgramData\\Shiori",
+                "state_filename": "shiori-agent-state.json",
+                "legacy_note": "Legacy Shiori compatibility naming is enabled by explicit request.",
+            }
+        raise HTTPException(status_code=400, detail="unsupported_agent_naming_profile")
+
     @app.get("/api/v1/admin/downloads/agent/windows")
-    def download_windows_agent(_admin=Depends(_admin_auth)):
-        path = Path(os.environ.get("SHIORI_WINDOWS_AGENT_EXE") or os.environ.get("OPEN_EDR_MDR_WINDOWS_AGENT_EXE", "/tmp/shiori-agent.exe"))
+    def download_windows_agent(naming: str = "shigure", _admin=Depends(_admin_auth)):
+        names = _agent_naming_profile(naming)
+        path = Path(os.environ.get("OPEN_EDR_MDR_WINDOWS_AGENT_EXE") or os.environ.get("SHIORI_WINDOWS_AGENT_EXE", "/tmp/shigure-agent.exe"))
         if not path.exists() or not path.is_file():
             raise HTTPException(status_code=404, detail="windows_agent_binary_not_found")
-        return FileResponse(path, media_type="application/vnd.microsoft.portable-executable", filename="shiori-agent.exe")
+        return FileResponse(path, media_type="application/vnd.microsoft.portable-executable", filename=names["agent_filename"])
 
-    def _deployment_config(tenant_id: str, server_url: str, enrollment_token: str) -> dict:
+    def _deployment_config(tenant_id: str, server_url: str, enrollment_token: str, *, naming: str = "shigure") -> dict:
         runtime = app.state.runtime_config
         server_trust = runtime.get("server_trust", "")
+        names = _agent_naming_profile(naming)
+        data_dir = names["data_dir"]
+        state_file = f"{data_dir}\\{names['state_filename']}"
+        spool_file = f"{data_dir}\\spool.jsonl"
+        config_file = f"{data_dir}\\{names['config_filename']}"
         return {
             "tenant_id": tenant_id,
             "profile": runtime["profile"],
+            "naming_profile": names["profile"],
             "server_url": server_url,
             "server_trust": server_trust,
             "enrollment_token": enrollment_token,
-            "agent_filename": "shiori-agent.exe",
-            "install_dir": "C:\\Program Files\\Shiori",
-            "data_dir": "C:\\ProgramData\\Shiori",
-            "identity_file": "C:\\ProgramData\\Shiori\\shiori-agent-state.json",
-            "spool_file": "C:\\ProgramData\\Shiori\\spool.jsonl",
+            "agent_filename": names["agent_filename"],
+            "config_filename": names["config_filename"],
+            "service_name": names["service_name"],
+            "service_display_name": names["service_display_name"],
+            "service_binary_name": names["agent_filename"],
+            "install_dir": names["install_dir"],
+            "data_dir": data_dir,
+            "identity_file": state_file,
+            "spool_file": spool_file,
             "spool_max_bytes": 52428800,
             "spool_max_records": 10000,
-            "installed_config_file": "C:\\ProgramData\\Shiori\\shiori-agent-config.json",
-            "install_command": ".\\shiori-agent.exe --install-service --config C:\\ProgramData\\Shiori\\shiori-agent-config.json",
+            "installed_config_file": config_file,
+            "install_command": (
+                f".\\{names['agent_filename']} --install-service --config {config_file} "
+                f"--install-dir \"{names['install_dir']}\" --state {state_file} --spool {spool_file} "
+                f"--service-name {names['service_name']} --service-display-name \"{names['service_display_name']}\" "
+                f"--service-binary-name {names['agent_filename']}"
+            ),
             "package_install_command": ".\\install.ps1",
-            "start_command": "sc.exe start ShioriAgent",
+            "start_command": f"sc.exe start {names['service_name']}",
             "enrollment_model": {
                 "stage_1": "This shared enrollment token is only for first registration with the server.",
-                "stage_2": "After successful enrollment, the server issues a per-endpoint credential stored as C:\\ProgramData\\Shiori\\shiori-agent-state.json.",
+                "stage_2": f"After successful enrollment, the server issues a per-endpoint credential stored as {state_file}.",
                 "stage_3": "All heartbeat, event ingest, task claim, and result upload calls use the per-endpoint credential, not the shared enrollment token.",
             },
             "notes": [
                 "Run install.ps1 from an elevated PowerShell prompt on the Windows endpoint.",
                 "Endpoint traffic is outbound-only; server queues jobs and agent polls /tasks/claim.",
-                "The installer copies the service binary to C:\\Program Files\\Shiori and stores endpoint state/spool files under C:\\ProgramData\\Shiori.",
-                "Shiori binary, service, and path names are current compatibility names during the planned Shigure naming migration.",
+                f"The installer copies the service binary to {names['install_dir']} and stores endpoint state/spool files under {data_dir}.",
+                names["legacy_note"] or "Shigure runtime names are the default for new deployments.",
                 "Protect this package because it contains an enrollment token. The token should be short-lived or limited-use in production.",
             ],
         }
 
     @app.get("/api/v1/admin/downloads/agent-config")
-    def download_agent_config(tenant_id: str = "default", server_url: str = "http://127.0.0.1:8765", max_uses: Optional[int] = None, _admin=Depends(_admin_auth)):
+    def download_agent_config(tenant_id: str = "default", server_url: str = "http://127.0.0.1:8765", max_uses: Optional[int] = None, naming: str = "shigure", _admin=Depends(_admin_auth)):
         _validate_deployment_server_url(app, server_url)
         token = store.create_enrollment_token(tenant_id, max_uses=max_uses)
-        config = _deployment_config(tenant_id, server_url, token)
-        return JSONResponse(config, headers={"Content-Disposition": "attachment; filename=shiori-agent-config.json"})
+        config = _deployment_config(tenant_id, server_url, token, naming=naming)
+        return JSONResponse(config, headers={"Content-Disposition": f"attachment; filename={config['config_filename']}"})
 
     @app.get("/api/v1/admin/downloads/agent/package")
-    def download_agent_package(tenant_id: str = "default", server_url: str = "http://127.0.0.1:8765", max_uses: Optional[int] = None, _admin=Depends(_admin_auth)):
-        agent_path = Path(os.environ.get("SHIORI_WINDOWS_AGENT_EXE") or os.environ.get("OPEN_EDR_MDR_WINDOWS_AGENT_EXE", "/tmp/shiori-agent.exe"))
+    def download_agent_package(tenant_id: str = "default", server_url: str = "http://127.0.0.1:8765", max_uses: Optional[int] = None, naming: str = "shigure", _admin=Depends(_admin_auth)):
+        names = _agent_naming_profile(naming)
+        agent_path = Path(os.environ.get("OPEN_EDR_MDR_WINDOWS_AGENT_EXE") or os.environ.get("SHIORI_WINDOWS_AGENT_EXE", "/tmp/shigure-agent.exe"))
         if not agent_path.exists() or not agent_path.is_file():
             raise HTTPException(status_code=404, detail="windows_agent_binary_not_found")
         _validate_deployment_server_url(app, server_url)
         token = store.create_enrollment_token(tenant_id, max_uses=max_uses)
-        config = _deployment_config(tenant_id, server_url, token)
-        install_ps1 = r"""$ErrorActionPreference = "Stop"
+        config = _deployment_config(tenant_id, server_url, token, naming=naming)
+        install_ps1 = f"""$ErrorActionPreference = "Stop"
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Agent = Join-Path $Here "shiori-agent.exe"
-$ConfigPath = Join-Path $Here "shiori-agent-config.json"
-if (!(Test-Path $Agent)) { throw "shiori-agent.exe not found" }
-if (!(Test-Path $ConfigPath)) { throw "shiori-agent-config.json not found" }
+$Agent = Join-Path $Here "{names['agent_filename']}"
+$ConfigPath = Join-Path $Here "{names['config_filename']}"
+if (!(Test-Path $Agent)) {{ throw "{names['agent_filename']} not found" }}
+if (!(Test-Path $ConfigPath)) {{ throw "{names['config_filename']} not found" }}
 $Config = Get-Content $ConfigPath -Raw | ConvertFrom-Json
-if (!$Config.server_url) { throw "server_url missing from config" }
-if (!$Config.enrollment_token) { throw "enrollment_token missing from config" }
+if (!$Config.server_url) {{ throw "server_url missing from config" }}
+if (!$Config.enrollment_token) {{ throw "enrollment_token missing from config" }}
 $InstallDir = $Config.install_dir
 $DataDir = $Config.data_dir
 $Profile = $Config.profile
-if (!$InstallDir) { $InstallDir = "C:\Program Files\Shiori" }
-if (!$DataDir) { $DataDir = "C:\ProgramData\Shiori" }
-if (!$Profile) { $Profile = "dev" }
+if (!$InstallDir) {{ $InstallDir = "{names['install_dir']}" }}
+if (!$DataDir) {{ $DataDir = "{names['data_dir']}" }}
+if (!$Profile) {{ $Profile = "dev" }}
 Write-Host "Installing Shigure Agent for $($Config.server_url)"
 New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
-$InstalledConfig = Join-Path $DataDir "shiori-agent-config.json"
+$InstalledConfig = Join-Path $DataDir "{names['config_filename']}"
 Copy-Item -Force $ConfigPath $InstalledConfig
-$Args = @("--install-service", "--config", $InstalledConfig, "--install-dir", $InstallDir, "--state", (Join-Path $DataDir "shiori-agent-state.json"), "--spool", (Join-Path $DataDir "spool.jsonl"))
+$Args = @("--install-service", "--config", $InstalledConfig, "--install-dir", $InstallDir, "--state", (Join-Path $DataDir "{names['state_filename']}"), "--spool", (Join-Path $DataDir "spool.jsonl"), "--service-name", "{names['service_name']}", "--service-display-name", "{names['service_display_name']}", "--service-binary-name", "{names['agent_filename']}")
 & $Agent @Args
-sc.exe start ShioriAgent
-Write-Host "Installed. Service binary: $(Join-Path $InstallDir 'shiori-agent.exe')"
-Write-Host "Endpoint state: $(Join-Path $DataDir 'shiori-agent-state.json')"
+sc.exe start {names['service_name']}
+Write-Host "Installed. Service binary: $(Join-Path $InstallDir '{names['agent_filename']}')"
+Write-Host "Endpoint state: $(Join-Path $DataDir '{names['state_filename']}')"
 Write-Host "Agent config: $InstalledConfig"
 """
-        readme = r"""Shigure Agent deployment package
+        legacy_line = "\nLegacy Shiori compatibility naming is enabled by explicit request.\n" if names["profile"] == "shiori" else ""
+        readme = f"""Shigure Agent deployment package
 
 Files:
-- shiori-agent.exe: Windows endpoint service binary
-- shiori-agent-config.json: shared first-enrollment config
+- {names['agent_filename']}: Windows endpoint service binary
+- {names['config_filename']}: shared first-enrollment config
 - install.ps1: elevated PowerShell installer
+{legacy_line}
+Runtime names:
+- Service: {names['service_name']} ({names['service_display_name']})
+- Install directory: {names['install_dir']}
+- Data directory: {names['data_dir']}
+- State file: {config['identity_file']}
 
 Enrollment model:
 1. The config contains a shared enrollment token, similar to Fleet/osquery enroll secret.
 2. On first successful registration, the server creates the endpoint record and returns a per-endpoint credential.
-3. The endpoint stores that credential as C:\ProgramData\Shiori\shiori-agent-state.json and uses it for future authentication.
+3. The endpoint stores that credential as {config['identity_file']} and uses it for future authentication.
 4. The shared enrollment token should not be used as the long-term endpoint identity.
-5. install.ps1 copies the bootstrap config to C:\ProgramData\Shiori and installs the service with --config, so the service command line does not contain the enrollment token.
+5. install.ps1 copies the bootstrap config to {names['data_dir']} and installs the service with --config, so the service command line does not contain the enrollment token.
 6. After the first successful enrollment, the agent removes enrollment_token from the installed config file; recovery should use a fresh enrollment token.
 7. The local spool is bounded by spool_max_bytes and spool_max_records. Under pressure, oldest queued records are dropped first and the heartbeat reports spool pressure/drop counters.
 
@@ -756,15 +810,15 @@ Run from elevated PowerShell:
 """
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-            zf.write(agent_path, "shiori-agent.exe")
-            zf.writestr("shiori-agent-config.json", json.dumps(config, ensure_ascii=False, indent=2))
+            zf.write(agent_path, names["agent_filename"])
+            zf.writestr(names["config_filename"], json.dumps(config, ensure_ascii=False, indent=2))
             zf.writestr("install.ps1", install_ps1)
             zf.writestr("README.txt", readme)
         buf.seek(0)
         return Response(
             buf.getvalue(),
             media_type="application/zip",
-            headers={"Content-Disposition": "attachment; filename=shiori-agent-package.zip"},
+            headers={"Content-Disposition": f"attachment; filename={names['package_filename']}"},
         )
 
     @app.get("/api/v1/admin/enrollment-tokens")
@@ -1213,7 +1267,7 @@ function renderContext(){const a=STATE.selectedAlert,ep=STATE.selectedEndpoint;l
 function currentAgent(){return STATE.selectedEndpoint||(STATE.selectedAlert&&findAgentByHost(STATE.selectedAlert.host))||STATE.agents[0]}function renderRecommendedActions(){const a=STATE.selectedAlert;let rec=[['Collect event logs','windows_event_logs',{profile:a&&String(a.title||'').toLowerCase().includes('powershell')?'powershell':'service',max_events:25}],['Inspect processes','process_list',{}],['Network snapshot','network_connections',{}],['Persistence sweep','autoruns_collect',{}]];if(!a)rec=[['Inventory','inventory',{}],['Agent identity','agent_identity',{}],['Listening ports','listening_ports',{}]];$('recommendedActions').innerHTML=rec.map(([label,type,args])=>`<div class="action-row"><div><b>${esc(label)}</b><span>${esc(type)} ${esc(JSON.stringify(args))}</span></div><button class="secondary" onclick='queueTask("${type}",${JSON.stringify(args)})'>Run</button></div>`).join('')}
 function renderTaskSelectors(){const ep=currentAgent();const tasks=(STATE.taskCatalog||[]).map(t=>t.task_type);$('taskAgent').innerHTML=STATE.agents.map(a=>`<option value="${esc(a.agent_id)}" ${ep&&ep.agent_id===a.agent_id?'selected':''}>${esc(a.host||a.agent_id)}</option>`).join('')||'<option value="">no agent</option>';$('taskType').innerHTML=tasks.map(t=>`<option>${esc(t)}</option>`).join('')}async function queueTask(type,args){const ep=currentAgent();if(!ep)throwStatus('No endpoint selected');$('taskStatus').innerHTML='<span class="muted">queueing…</span>';try{const body={tenant_id:rawTenant(),agent_id:ep.agent_id,task_type:type,args:args||{}};const r=await api('/api/v1/admin/tasks',{method:'POST',json:true,body});$('taskStatus').innerHTML=`<span class="ok">queued ${esc(short(r.task_id,16))}</span>`;await loadAll()}catch(e){$('taskStatus').innerHTML=`<span class="error">${esc(e.message)}</span>`}}function throwStatus(msg){$('taskStatus').innerHTML=`<span class="error">${esc(msg)}</span>`;throw new Error(msg)}async function queueCustomTask(){let args={};try{args=$('taskArgs').value?JSON.parse($('taskArgs').value):{}}catch(e){return throwStatus('Invalid JSON args')}await queueTask($('taskType').value,args)}function presetSafeTask(){$('taskType').value='windows_event_logs';$('taskArgs').value=JSON.stringify({profile:'powershell',max_events:25},null,2)}
 async function startWorkspace(){const a=STATE.selectedAlert;if(!a)return throwStatus('Select an alert first');try{STATE.workspace=await api('/api/v1/admin/investigate/workspace/start',{method:'POST',json:true,body:{tenant_id:rawTenant(),alert_id:a.alert_id,priority:a.severity}});$('taskStatus').innerHTML=`<span class="ok">workspace ${esc(short(STATE.workspace.case.case_id,16))}</span>`;await loadAll()}catch(e){$('taskStatus').innerHTML=`<span class="error">${esc(e.message)}</span>`}}async function attachLatestTaskEvidence(){const w=STATE.workspace;if(!w||!w.case)return throwStatus('Start workspace first');const t=(STATE.tasks||[]).find(t=>t.raw_ref&&(!w.case.case_id||t.args.case_id===w.case.case_id))||(STATE.tasks||[]).find(t=>t.raw_ref);if(!t)return throwStatus('No completed task evidence');try{await api('/api/v1/admin/investigate/workspace/attach-task-evidence',{method:'POST',json:true,body:{tenant_id:rawTenant(),case_id:w.case.case_id,task_id:t.task_id,summary:'Attached from workspace'}});$('taskStatus').innerHTML='<span class="ok">evidence attached</span>';await loadAll()}catch(e){$('taskStatus').innerHTML=`<span class="error">${esc(e.message)}</span>`}}function openHandoff(){const w=STATE.workspace;if(!w||!w.case)return throwStatus('Start workspace first');window.open(`/api/v1/admin/cases/${encodeURIComponent(w.case.case_id)}/handoff?tenant_id=${tenant()}`,'_blank')}
-function openDeploy(){$('deployDrawer').classList.add('open')}function closeDeploy(){$('deployDrawer').classList.remove('open')}async function downloadBlob(path,filename,statusId){try{const r=await fetch(path,{headers:headers()});if(!r.ok)throw new Error(await r.text());const b=await r.blob();const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download=filename;a.click();URL.revokeObjectURL(u);$(statusId).innerHTML='<span class="ok">download started</span>'}catch(e){$(statusId).innerHTML='<span class="error">'+esc(e.message)+'</span>'}}function deploymentQuery(){const max=$('maxUses').value;return `tenant_id=${tenant()}&server_url=${encodeURIComponent($('serverUrl').value)}`+(max?`&max_uses=${encodeURIComponent(max)}`:'')}function downloadPackage(){downloadBlob('/api/v1/admin/downloads/agent/package?'+deploymentQuery(),'shiori-agent-package.zip','deployStatus')}function downloadAgent(){downloadBlob('/api/v1/admin/downloads/agent/windows','shiori-agent.exe','deployStatus')}function downloadConfig(){downloadBlob('/api/v1/admin/downloads/agent-config?'+deploymentQuery(),'shiori-agent-config.json','deployStatus')}
+function openDeploy(){$('deployDrawer').classList.add('open')}function closeDeploy(){$('deployDrawer').classList.remove('open')}async function downloadBlob(path,filename,statusId){try{const r=await fetch(path,{headers:headers()});if(!r.ok)throw new Error(await r.text());const b=await r.blob();const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download=filename;a.click();URL.revokeObjectURL(u);$(statusId).innerHTML='<span class="ok">download started</span>'}catch(e){$(statusId).innerHTML='<span class="error">'+esc(e.message)+'</span>'}}function deploymentQuery(){const max=$('maxUses').value;return `tenant_id=${tenant()}&server_url=${encodeURIComponent($('serverUrl').value)}`+(max?`&max_uses=${encodeURIComponent(max)}`:'')}function downloadPackage(){downloadBlob('/api/v1/admin/downloads/agent/package?'+deploymentQuery(),'shigure-agent-package.zip','deployStatus')}function downloadAgent(){downloadBlob('/api/v1/admin/downloads/agent/windows','shigure-agent.exe','deployStatus')}function downloadConfig(){downloadBlob('/api/v1/admin/downloads/agent-config?'+deploymentQuery(),'shigure-agent-config.json','deployStatus')}
 loadAll();
 </script>
 </body>

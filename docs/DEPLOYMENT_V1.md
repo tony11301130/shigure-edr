@@ -51,39 +51,41 @@ curl http://127.0.0.1:8080/health
 
 The agent communicates outbound to the server. It enrolls once, stores local state, heartbeats for config, uploads telemetry, polls for queued read-only tasks, and uploads task results with raw evidence hashes.
 
-Shigure is the product name. The current binary, service, and Windows path examples still use Shiori compatibility names until the planned Shigure runtime naming migration lands.
+Shigure is the product name and the default runtime naming profile for new Windows deployments. Shiori names are retained only as explicit legacy compatibility overrides for old prototype endpoints.
 
 ```powershell
-.\shiori-agent.exe `
+.\shigure-agent.exe `
   --profile production `
   --server https://edr.internal.example `
   --enroll-token <initial-enrollment-token> `
   --server-trust system `
-  --state C:\ProgramData\Shiori\shiori-agent-state.json `
-  --spool C:\ProgramData\Shiori\spool.jsonl
+  --state C:\ProgramData\Shigure\shigure-agent-state.json `
+  --spool C:\ProgramData\Shigure\spool.jsonl
 ```
 
-Install as a Windows Service after validating the command line. The installer copies the service binary to `C:\Program Files\Shiori\shiori-agent.exe` and stores endpoint state/spool files under `C:\ProgramData\Shiori` by default:
+Install as a Windows Service after validating the command line. The installer copies the service binary to `C:\Program Files\Shigure\shigure-agent.exe` and stores endpoint state/spool files under `C:\ProgramData\Shigure` by default:
 
 ```powershell
-.\shiori-agent.exe --install-service --config C:\ProgramData\Shiori\shiori-agent-config.json
-Start-Service ShioriAgent
-sc.exe qc ShioriAgent
+.\shigure-agent.exe --install-service --config C:\ProgramData\Shigure\shigure-agent-config.json
+Start-Service ShigureAgent
+sc.exe qc ShigureAgent
 ```
 
-The generated deployment package copies `shiori-agent-config.json` into `C:\ProgramData\Shiori` and installs the service with `--config`; the service command line should not contain the enrollment token. After the first successful enrollment, the agent removes `enrollment_token` from the installed config file so restart/authentication uses only the state file's per-agent credential. Direct `--enroll-token` startup remains available for dev/demo/manual diagnostics, but production service installs should prefer config-file bootstrap.
+The generated deployment package copies `shigure-agent-config.json` into `C:\ProgramData\Shigure` and installs the service with `--config`; the service command line should not contain the enrollment token. After the first successful enrollment, the agent removes `enrollment_token` from the installed config file so restart/authentication uses only the state file's per-agent credential. Direct `--enroll-token` startup remains available for dev/demo/manual diagnostics, but production service installs should prefer config-file bootstrap.
+
+Legacy Shiori prototype deployments can still be produced explicitly with `naming=shiori` on the deployment package/config endpoints, or by passing explicit CLI overrides such as `--service-name ShioriAgent`, `--service-display-name "Shiori Agent"`, `--service-binary-name shiori-agent.exe`, `--install-dir "C:\Program Files\Shiori"`, `--state C:\ProgramData\Shiori\shiori-agent-state.json`, and `--spool C:\ProgramData\Shiori\spool.jsonl`. New deployments should not use these names.
 
 Uninstall if needed:
 
 ```powershell
-Stop-Service ShioriAgent
-& 'C:\Program Files\Shiori\shiori-agent.exe' --uninstall-service
+Stop-Service ShigureAgent
+& 'C:\Program Files\Shigure\shigure-agent.exe' --uninstall-service
 ```
 
 ## Agent credential lifecycle
 
 - Enrollment tokens are tenant-scoped bootstrap material. They are used only by `/api/v1/enroll`.
-- After enrollment, the server returns a per-agent credential and a credential version. The agent stores these in `C:\ProgramData\Shiori\shiori-agent-state.json`.
+- After enrollment, the server returns a per-agent credential and a credential version. The agent stores these in `C:\ProgramData\Shigure\shigure-agent-state.json`.
 - Heartbeat, telemetry upload, task claim/result upload, and evidence upload authenticate with the per-agent credential, not the enrollment token.
 - Admins can schedule an agent credential rotation when routine rotation or suspected exposure requires it. The rotation API records the next credential version without returning the new secret; the agent receives the new credential on its next successful heartbeat, persists it to local state, and uses it for subsequent heartbeat, telemetry, task, and evidence calls.
 - Admins can revoke an agent credential for retired or compromised endpoints. Revoked agents cannot heartbeat, upload events, claim tasks, or upload evidence.

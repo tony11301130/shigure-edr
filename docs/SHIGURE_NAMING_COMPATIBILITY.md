@@ -2,24 +2,23 @@
 
 Shigure is the canonical product name. Shiori is legacy prototype naming.
 
-This ticket only changes product-facing labels and documentation where the current product is described. It intentionally does not rename packages, modules, CLI commands, Go module paths, the repository, Windows service defaults, binary names, config filenames, install directories, or data directories.
+Product-facing labels use Shigure. New Windows runtime defaults also use Shigure for the service, package, binary, config, install path, data path, and state file. Shiori remains only as explicit legacy prototype compatibility naming.
 
 ## Compatibility Names Kept
 
 - Python package/import path: `open_edr_mdr_agent`
 - CLI command: `open-edr-mdr-agent`
 - Go command path: `agent/cmd/open-edr-agent`
-- Windows binary compatibility filename: `shiori-agent.exe`
-- Windows package/config compatibility filenames: `shiori-agent-package.zip`, `shiori-agent-config.json`
-- Windows service compatibility default: `ShioriAgent`
-- Windows install/data compatibility paths: `C:\Program Files\Shiori`, `C:\ProgramData\Shiori`
+- Windows binary compatibility filename when `naming=shiori` or explicit CLI overrides are used: `shiori-agent.exe`
+- Windows package/config compatibility filenames when `naming=shiori` is used: `shiori-agent-package.zip`, `shiori-agent-config.json`
+- Windows service compatibility override: `ShioriAgent`
+- Windows install/data compatibility override paths: `C:\Program Files\Shiori`, `C:\ProgramData\Shiori`
 - Legacy environment variable override: `SHIORI_WINDOWS_AGENT_EXE`
 
 ## Remaining `Shiori` Reference Categories
 
-- **Runtime defaults for #17:** `agent/cmd/open-edr-agent/*` and deployment package defaults still use the current Shiori service, binary, and path names until the Windows service lifecycle ticket migrates them coherently.
-- **Compatibility tests:** deployment and Go config tests assert the compatibility names above so existing prototype deployments keep working until #17.
-- **Compatibility documentation:** README, deployment, and response docs mention Shiori only to label these retained compatibility names and point to the planned runtime migration.
+- **Legacy override tests:** deployment package tests assert that `naming=shiori` still produces the old package/service/path names on explicit request.
+- **Compatibility documentation:** deployment and response docs mention Shiori only to label retained legacy override names.
 - **Historical research/planning:** research and scratch/spec planning files may mention Shiori when describing the rename decision history.
 
-No broad search-and-replace should be used for the runtime migration. Service names, file names, install paths, data paths, packaging, installer scripts, and compatibility overrides need to move together under the Windows release path work.
+Do not use broad search-and-replace for future naming work. Package/module names, command paths, repository name, historical research, and compatibility override strings have different stability requirements.

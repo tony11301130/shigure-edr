@@ -4,7 +4,7 @@ package main
 
 import "fmt"
 
-func installService(serviceName, displayName string, opts agentOptions, installDir string) error {
+func installService(serviceName, displayName string, opts agentOptions, installDir string, binaryName string) error {
 	return fmt.Errorf("service installation is only supported on Windows")
 }
 

@@ -75,20 +75,22 @@ Build the Windows agent and install it as the single branded endpoint service:
 
 ```powershell
 # Cross-build from Linux dev host
-GOOS=windows GOARCH=amd64 go build -o shiori-agent.exe ./agent/cmd/open-edr-agent
+GOOS=windows GOARCH=amd64 go build -o shigure-agent.exe ./agent/cmd/open-edr-agent
 
 # On Windows as Administrator
-.\shiori-agent.exe --install-service --server https://edr.example.local --enroll-token <tenant-token>
-sc.exe start ShioriAgent
+.\shigure-agent.exe --install-service --profile production --server https://edr.example.local --enroll-token <tenant-token> --server-trust system
+sc.exe start ShigureAgent
 
 # The agent binary detects Windows Service context and runs through the Service Control Manager.
 # Running the same binary from a console keeps the foreground loop behavior for diagnostics.
 
 # Remove service if needed
-.\shiori-agent.exe --uninstall-service
+.\shigure-agent.exe --uninstall-service
 ```
 
-The current binary, service, and Windows path examples still use Shiori compatibility names until the planned Shigure runtime naming migration lands. See `docs/SHIGURE_NAMING_COMPATIBILITY.md`.
+`dev` and `demo` profiles keep local HTTP smoke tests usable. `production` rejects HTTP server URLs, default/dev bootstrap credentials, and missing server trust configuration.
+
+Shiori prototype service, binary, and path names are available only through explicit legacy compatibility overrides. See `docs/SHIGURE_NAMING_COMPATIBILITY.md`.
 
 If you do not want a venv, you can also run with `PYTHONPATH=.`:
 

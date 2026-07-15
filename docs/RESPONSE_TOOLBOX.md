@@ -6,23 +6,25 @@ This gives the agent enough local authority to collect investigation evidence af
 
 ## Deploy as LocalSystem
 
-The command and path examples below still use Shiori compatibility names for the current runtime defaults. Product-facing language should call the product Shigure; #17 owns the coherent runtime service, binary, package, install path, and data path migration.
+The command and path examples below use the Shigure runtime defaults for new deployments. Shiori names remain available only through explicit legacy compatibility overrides.
 
 ```powershell
-.\shiori-agent.exe --install-service --server http://192.168.1.93:8765 --enroll-token <token>
-sc.exe start ShioriAgent
-sc.exe qc ShioriAgent
+.\shigure-agent.exe --install-service --server http://192.168.1.93:8765 --enroll-token <token>
+sc.exe start ShigureAgent
+sc.exe qc ShigureAgent
 ```
 
 Default Windows install paths:
 
 ```text
-Binary: C:\Program Files\Shiori\shiori-agent.exe
-State:  C:\ProgramData\Shiori\shiori-agent-state.json
-Spool:  C:\ProgramData\Shiori\spool.jsonl
+Binary: C:\Program Files\Shigure\shigure-agent.exe
+State:  C:\ProgramData\Shigure\shigure-agent-state.json
+Spool:  C:\ProgramData\Shigure\spool.jsonl
 ```
 
-The service installer may be launched from a temporary deployment directory, but it copies the binary into `C:\Program Files\Shiori` before creating the service.
+The service installer may be launched from a temporary deployment directory, but it copies the binary into `C:\Program Files\Shigure` before creating the service.
+
+For a legacy prototype endpoint, pass explicit overrides such as `--service-name ShioriAgent`, `--service-display-name "Shiori Agent"`, `--service-binary-name shiori-agent.exe`, `--install-dir "C:\Program Files\Shiori"`, `--state C:\ProgramData\Shiori\shiori-agent-state.json`, and `--spool C:\ProgramData\Shiori\spool.jsonl`.
 
 Confirm:
 
