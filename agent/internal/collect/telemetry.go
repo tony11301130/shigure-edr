@@ -3,10 +3,11 @@ package collect
 import "open-edr-mdr-agent/agent/internal/agentapi"
 
 type TelemetryOptions struct {
-	CollectProcessSnapshot  bool
-	CollectNetworkSnapshot  bool
-	CollectWindowsEventLogs bool
-	CollectETWProcessEvents bool
+	CollectProcessSnapshot              bool
+	CollectNetworkSnapshot              bool
+	CollectWindowsEventLogs             bool
+	CollectETWProcessEvents             bool
+	CollectWindowsEventLogSubscriptions bool
 }
 
 func DefaultTelemetryOptions() TelemetryOptions {
@@ -34,6 +35,9 @@ func SnapshotTelemetryWithOptions(tenantID string, maxEvents int, opts Telemetry
 	}
 	if opts.CollectETWProcessEvents && len(events) < maxEvents {
 		events = append(events, DrainDefaultETWProcessEvents(tenantID, maxEvents-len(events))...)
+	}
+	if opts.CollectWindowsEventLogSubscriptions && len(events) < maxEvents {
+		events = append(events, DrainDefaultWindowsEventLogSubscriptionEvents(tenantID, maxEvents-len(events))...)
 	}
 	if len(events) > maxEvents {
 		return events[:maxEvents]

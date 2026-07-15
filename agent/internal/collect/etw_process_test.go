@@ -142,6 +142,13 @@ func resetDefaultCollectorsForTest() {
 	defaultETWProcessCollector = nil
 	defaultETWProcessCollectorMu.Unlock()
 
+	defaultWindowsEventLogSubscriberMu.Lock()
+	defaultWindowsEventLogSubscriber = nil
+	defaultWindowsEventLogSubscriberMu.Unlock()
+	defaultWindowsEventLogCheckpointPathMu.Lock()
+	defaultWindowsEventLogCheckpointPath = ""
+	defaultWindowsEventLogCheckpointPathMu.Unlock()
+
 	defaultProcessTrackersMu.Lock()
 	defaultProcessTrackers = map[string]*ProcessTracker{}
 	defaultProcessTrackersMu.Unlock()

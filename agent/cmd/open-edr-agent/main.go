@@ -325,8 +325,22 @@ func runCycleWithContext(ctx context.Context, client *agentapi.Client, s *state.
 	} else {
 		collect.StopDefaultETWProcessCollector()
 	}
+	if featureEnabled(cfg.Features, "windows_eventlog_subscriptions") {
+		if err := collect.StartDefaultWindowsEventLogSubscriber(ctx, s.TenantID, eventLogCheckpointPath(statePath)); err != nil {
+			log.Printf("windows event log subscriber failed to start: %v", err)
+		}
+	} else {
+		collect.StopDefaultWindowsEventLogSubscriber()
+	}
 	if cfg.CollectSnapshot {
-		events = append(events, collect.SnapshotTelemetryWithOptions(s.TenantID, cfg.MaxSnapshotEvents, collect.TelemetryOptions{CollectProcessSnapshot: cfg.CollectProcessSnapshot, CollectNetworkSnapshot: cfg.CollectNetworkSnapshot, CollectWindowsEventLogs: cfg.CollectWindowsEventLogs, CollectETWProcessEvents: featureEnabled(cfg.Features, "windows_etw")})...)
+		eventLogSubscriptionsEnabled := featureEnabled(cfg.Features, "windows_eventlog_subscriptions")
+		events = append(events, collect.SnapshotTelemetryWithOptions(s.TenantID, cfg.MaxSnapshotEvents, collect.TelemetryOptions{
+			CollectProcessSnapshot:              cfg.CollectProcessSnapshot,
+			CollectNetworkSnapshot:              cfg.CollectNetworkSnapshot,
+			CollectWindowsEventLogs:             cfg.CollectWindowsEventLogs && !eventLogSubscriptionsEnabled,
+			CollectETWProcessEvents:             featureEnabled(cfg.Features, "windows_etw"),
+			CollectWindowsEventLogSubscriptions: eventLogSubscriptionsEnabled,
+		})...)
 	}
 	if cfg.DemoSuspiciousEvent {
 		events = append(events, collect.DemoSuspiciousPowerShellEvent(s.TenantID))
@@ -367,18 +381,26 @@ func agentHealth(spoolPath string, spoolLimits spool.Limits) map[string]any {
 		spoolSummary = spool.SpoolSummary{Bytes: spoolSize, PressureState: "unknown"}
 	}
 	return map[string]any{
-		"status":              "ok",
-		"pid":                 os.Getpid(),
-		"version":             version,
-		"runtime_os":          runtime.GOOS,
-		"runtime_arch":        runtime.GOARCH,
-		"spool_path":          spoolPath,
-		"spool_bytes":         spoolSize,
-		"spool":               spoolHealth(spoolSummary),
-		"process_tracker":     collect.ProcessTrackerHealth(),
-		"windows_etw_process": collect.ETWProcessCollectorHealth(),
-		"task_capabilities":   len(tasks.Allowed),
+		"status":                         "ok",
+		"pid":                            os.Getpid(),
+		"version":                        version,
+		"runtime_os":                     runtime.GOOS,
+		"runtime_arch":                   runtime.GOARCH,
+		"spool_path":                     spoolPath,
+		"spool_bytes":                    spoolSize,
+		"spool":                          spoolHealth(spoolSummary),
+		"process_tracker":                collect.ProcessTrackerHealth(),
+		"windows_etw_process":            collect.ETWProcessCollectorHealth(),
+		"windows_event_log_subscription": collect.WindowsEventLogSubscriberHealth(),
+		"task_capabilities":              len(tasks.Allowed),
 	}
+}
+
+func eventLogCheckpointPath(statePath string) string {
+	if statePath == "" {
+		return ""
+	}
+	return statePath + ".windows-eventlog-checkpoints.json"
 }
 
 func spoolHealth(summary spool.SpoolSummary) map[string]any {

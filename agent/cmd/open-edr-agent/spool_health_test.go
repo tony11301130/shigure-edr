@@ -92,6 +92,11 @@ func TestRunCycleReportsBoundedSpoolHealthInHeartbeat(t *testing.T) {
 	} else if etwProcess["status"] == "" {
 		t.Fatalf("expected ETW process collector status, got %+v", etwProcess)
 	}
+	if eventLogSubscriber, ok := heartbeatHealth["windows_event_log_subscription"].(map[string]any); !ok {
+		t.Fatalf("expected Windows Event Log subscriber health in heartbeat, got %+v", heartbeatHealth)
+	} else if eventLogSubscriber["status"] == "" {
+		t.Fatalf("expected Windows Event Log subscriber status, got %+v", eventLogSubscriber)
+	}
 }
 
 func TestRunCycleStartsETWProcessCollectorWhenFeatureEnabled(t *testing.T) {
@@ -142,6 +147,55 @@ func TestRunCycleStartsETWProcessCollectorWhenFeatureEnabled(t *testing.T) {
 	}
 }
 
+func TestRunCycleStartsWindowsEventLogSubscriberWhenFeatureEnabled(t *testing.T) {
+	collectResetDefaultCollectorsForTest()
+	defer collect.StopDefaultWindowsEventLogSubscriber()
+
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+	spoolPath := filepath.Join(dir, "spool.jsonl")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/agents/agent-1/heartbeat":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "ok", "tasks_pending": false, "config_version": 1,
+				"config": map[string]any{
+					"version": 1, "task_poll_seconds": 15, "heartbeat_seconds": 30, "upload_interval_seconds": 15,
+					"max_snapshot_events": 25, "collect_snapshot": false, "collect_process_snapshot": false,
+					"collect_network_snapshot": false, "collect_windows_event_logs": true, "demo_suspicious_event": false,
+					"features": map[string]any{"collector_gates_explicit": true, "windows_eventlog_subscriptions": true},
+				},
+			})
+		case "/api/v1/agents/agent-1/tasks/claim":
+			_ = json.NewEncoder(w).Encode(map[string]any{"tasks": []any{}})
+		default:
+			t.Fatalf("unexpected request %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	agentState := &state.State{TenantID: "default", AgentID: "agent-1", AgentToken: "agent-token", CredentialVersion: 1}
+	if err := state.Save(statePath, agentState); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+	if _, err := runCycle(agentapi.New(server.URL), agentState, statePath, spoolPath, spool.Limits{}, agentapi.AgentConfig{CollectSnapshot: false, MaxSnapshotEvents: 25, Features: map[string]any{"windows_eventlog_subscriptions": true}}); err != nil {
+		t.Fatalf("run cycle: %v", err)
+	}
+
+	if health := collect.WindowsEventLogSubscriberHealth(); health["running"] != true {
+		t.Fatalf("expected Event Log subscriber to be running, got %+v", health)
+	}
+
+	if _, err := runCycle(agentapi.New(server.URL), agentState, statePath, spoolPath, spool.Limits{}, agentapi.AgentConfig{CollectSnapshot: false, MaxSnapshotEvents: 25, Features: map[string]any{"windows_eventlog_subscriptions": false}}); err != nil {
+		t.Fatalf("run disabled cycle: %v", err)
+	}
+	if health := collect.WindowsEventLogSubscriberHealth(); health["running"] != false {
+		t.Fatalf("expected Event Log subscriber to stop when feature is disabled, got %+v", health)
+	}
+}
+
 func collectResetDefaultCollectorsForTest() {
 	collect.StopDefaultETWProcessCollector()
+	collect.StopDefaultWindowsEventLogSubscriber()
 }
