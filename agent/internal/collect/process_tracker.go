@@ -270,15 +270,20 @@ func observeProcessSnapshotEvents(tenantID, bootID string, events []agentapi.Nor
 		return events
 	}
 	host := events[0].Host
+	tracker := defaultProcessTrackerFor(host, bootID)
+	return tracker.ObserveSnapshot(tenantID, events)
+}
+
+func defaultProcessTrackerFor(host, bootID string) *ProcessTracker {
 	key := host + "\x00" + bootID
 	defaultProcessTrackersMu.Lock()
+	defer defaultProcessTrackersMu.Unlock()
 	tracker, ok := defaultProcessTrackers[key]
 	if !ok {
 		tracker = NewProcessTracker(host, bootID, ProcessTrackerOptions{})
 		defaultProcessTrackers[key] = tracker
 	}
-	defaultProcessTrackersMu.Unlock()
-	return tracker.ObserveSnapshot(tenantID, events)
+	return tracker
 }
 
 func ProcessTrackerHealth() map[string]any {

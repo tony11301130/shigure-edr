@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -237,8 +238,13 @@ func runAgent(opts agentOptions, stop <-chan struct{}) error {
 
 	runtimeConfig := agentapi.AgentConfig{TaskPollSeconds: int(opts.Interval.Seconds()), HeartbeatSeconds: int(opts.Interval.Seconds()), UploadIntervalSeconds: int(opts.Interval.Seconds()), MaxSnapshotEvents: opts.MaxSnapshotEvents, CollectSnapshot: opts.CollectSnapshot, CollectProcessSnapshot: true, CollectNetworkSnapshot: true, CollectWindowsEventLogs: true, DemoSuspiciousEvent: opts.DemoEvent}
 	spoolLimits := opts.spoolLimits()
+	agentCtx, cancelCollectors := context.WithCancel(context.Background())
+	defer func() {
+		cancelCollectors()
+		collect.StopDefaultETWProcessCollector()
+	}()
 	for {
-		newConfig, err := runCycle(client, agentState, opts.StatePath, opts.SpoolPath, spoolLimits, runtimeConfig)
+		newConfig, err := runCycleWithContext(agentCtx, client, agentState, opts.StatePath, opts.SpoolPath, spoolLimits, runtimeConfig)
 		if err != nil {
 			log.Printf("cycle error: %v", err)
 		}
@@ -285,6 +291,10 @@ func enroll(client *agentapi.Client, token string) (*state.State, error) {
 }
 
 func runCycle(client *agentapi.Client, s *state.State, statePath string, spoolPath string, spoolLimits spool.Limits, cfg agentapi.AgentConfig) (*agentapi.AgentConfig, error) {
+	return runCycleWithContext(context.Background(), client, s, statePath, spoolPath, spoolLimits, cfg)
+}
+
+func runCycleWithContext(ctx context.Context, client *agentapi.Client, s *state.State, statePath string, spoolPath string, spoolLimits spool.Limits, cfg agentapi.AgentConfig) (*agentapi.AgentConfig, error) {
 	if _, err := spool.FlushBounded(spoolPath, client, s, spoolLimits); err != nil {
 		log.Printf("spool flush failed: %v", err)
 	}
@@ -308,8 +318,15 @@ func runCycle(client *agentapi.Client, s *state.State, statePath string, spoolPa
 	}
 
 	events := []agentapi.NormalizedEvent{}
+	if featureEnabled(cfg.Features, "windows_etw") {
+		if err := collect.StartDefaultETWProcessCollector(ctx, s.TenantID); err != nil {
+			log.Printf("windows etw process collector failed to start: %v", err)
+		}
+	} else {
+		collect.StopDefaultETWProcessCollector()
+	}
 	if cfg.CollectSnapshot {
-		events = append(events, collect.SnapshotTelemetryWithOptions(s.TenantID, cfg.MaxSnapshotEvents, collect.TelemetryOptions{CollectProcessSnapshot: cfg.CollectProcessSnapshot, CollectNetworkSnapshot: cfg.CollectNetworkSnapshot, CollectWindowsEventLogs: cfg.CollectWindowsEventLogs})...)
+		events = append(events, collect.SnapshotTelemetryWithOptions(s.TenantID, cfg.MaxSnapshotEvents, collect.TelemetryOptions{CollectProcessSnapshot: cfg.CollectProcessSnapshot, CollectNetworkSnapshot: cfg.CollectNetworkSnapshot, CollectWindowsEventLogs: cfg.CollectWindowsEventLogs, CollectETWProcessEvents: featureEnabled(cfg.Features, "windows_etw")})...)
 	}
 	if cfg.DemoSuspiciousEvent {
 		events = append(events, collect.DemoSuspiciousPowerShellEvent(s.TenantID))
@@ -350,16 +367,17 @@ func agentHealth(spoolPath string, spoolLimits spool.Limits) map[string]any {
 		spoolSummary = spool.SpoolSummary{Bytes: spoolSize, PressureState: "unknown"}
 	}
 	return map[string]any{
-		"status":            "ok",
-		"pid":               os.Getpid(),
-		"version":           version,
-		"runtime_os":        runtime.GOOS,
-		"runtime_arch":      runtime.GOARCH,
-		"spool_path":        spoolPath,
-		"spool_bytes":       spoolSize,
-		"spool":             spoolHealth(spoolSummary),
-		"process_tracker":   collect.ProcessTrackerHealth(),
-		"task_capabilities": len(tasks.Allowed),
+		"status":              "ok",
+		"pid":                 os.Getpid(),
+		"version":             version,
+		"runtime_os":          runtime.GOOS,
+		"runtime_arch":        runtime.GOARCH,
+		"spool_path":          spoolPath,
+		"spool_bytes":         spoolSize,
+		"spool":               spoolHealth(spoolSummary),
+		"process_tracker":     collect.ProcessTrackerHealth(),
+		"windows_etw_process": collect.ETWProcessCollectorHealth(),
+		"task_capabilities":   len(tasks.Allowed),
 	}
 }
 
@@ -397,6 +415,10 @@ func mergeCLIOverrides(cfg agentapi.AgentConfig, forceDemo bool, fallbackMaxSnap
 		cfg.DemoSuspiciousEvent = true
 	}
 	return cfg
+}
+
+func featureEnabled(features map[string]any, key string) bool {
+	return features != nil && features[key] == true
 }
 
 func executeAndReport(client *agentapi.Client, s *state.State, spoolPath string, spoolLimits spool.Limits, task agentapi.Task) {

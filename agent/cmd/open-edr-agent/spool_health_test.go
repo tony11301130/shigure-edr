@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"open-edr-mdr-agent/agent/internal/agentapi"
+	"open-edr-mdr-agent/agent/internal/collect"
 	"open-edr-mdr-agent/agent/internal/spool"
 	"open-edr-mdr-agent/agent/internal/state"
 )
@@ -86,4 +87,61 @@ func TestRunCycleReportsBoundedSpoolHealthInHeartbeat(t *testing.T) {
 	} else if _, ok := processTracker["active_processes"]; !ok {
 		t.Fatalf("expected process tracker active count, got %+v", processTracker)
 	}
+	if etwProcess, ok := heartbeatHealth["windows_etw_process"].(map[string]any); !ok {
+		t.Fatalf("expected ETW process collector health in heartbeat, got %+v", heartbeatHealth)
+	} else if etwProcess["status"] == "" {
+		t.Fatalf("expected ETW process collector status, got %+v", etwProcess)
+	}
+}
+
+func TestRunCycleStartsETWProcessCollectorWhenFeatureEnabled(t *testing.T) {
+	collectResetDefaultCollectorsForTest()
+	defer collect.StopDefaultETWProcessCollector()
+
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+	spoolPath := filepath.Join(dir, "spool.jsonl")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/agents/agent-1/heartbeat":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "ok", "tasks_pending": false, "config_version": 1,
+				"config": map[string]any{
+					"version": 1, "task_poll_seconds": 15, "heartbeat_seconds": 30, "upload_interval_seconds": 15,
+					"max_snapshot_events": 25, "collect_snapshot": false, "collect_process_snapshot": false,
+					"collect_network_snapshot": false, "collect_windows_event_logs": false, "demo_suspicious_event": false,
+					"features": map[string]any{"collector_gates_explicit": true, "windows_etw": true},
+				},
+			})
+		case "/api/v1/agents/agent-1/tasks/claim":
+			_ = json.NewEncoder(w).Encode(map[string]any{"tasks": []any{}})
+		default:
+			t.Fatalf("unexpected request %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	agentState := &state.State{TenantID: "default", AgentID: "agent-1", AgentToken: "agent-token", CredentialVersion: 1}
+	if err := state.Save(statePath, agentState); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+	if _, err := runCycle(agentapi.New(server.URL), agentState, statePath, spoolPath, spool.Limits{}, agentapi.AgentConfig{CollectSnapshot: false, MaxSnapshotEvents: 25, Features: map[string]any{"windows_etw": true}}); err != nil {
+		t.Fatalf("run cycle: %v", err)
+	}
+
+	if health := collect.ETWProcessCollectorHealth(); health["running"] != true {
+		t.Fatalf("expected ETW collector to be running, got %+v", health)
+	}
+
+	if _, err := runCycle(agentapi.New(server.URL), agentState, statePath, spoolPath, spool.Limits{}, agentapi.AgentConfig{CollectSnapshot: false, MaxSnapshotEvents: 25, Features: map[string]any{"windows_etw": false}}); err != nil {
+		t.Fatalf("run disabled cycle: %v", err)
+	}
+	if health := collect.ETWProcessCollectorHealth(); health["running"] != false {
+		t.Fatalf("expected ETW collector to stop when feature is disabled, got %+v", health)
+	}
+}
+
+func collectResetDefaultCollectorsForTest() {
+	collect.StopDefaultETWProcessCollector()
 }

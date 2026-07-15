@@ -167,6 +167,22 @@ func TestDevOptionsAllowLocalHTTPAndDevToken(t *testing.T) {
 	}
 }
 
+func TestFeatureEnabledRequiresExplicitBooleanTrue(t *testing.T) {
+	if !featureEnabled(map[string]any{"windows_etw": true}, "windows_etw") {
+		t.Fatalf("expected explicit true feature to be enabled")
+	}
+	for _, features := range []map[string]any{
+		nil,
+		{},
+		{"windows_etw": false},
+		{"windows_etw": "true"},
+	} {
+		if featureEnabled(features, "windows_etw") {
+			t.Fatalf("expected feature to stay disabled for %+v", features)
+		}
+	}
+}
+
 func TestWindowsServiceCommandLineQuotesPathsWithSpaces(t *testing.T) {
 	got := windowsServiceCommandLine(`C:\Program Files\Shiori\shiori-agent.exe`, []string{
 		"--server-trust",

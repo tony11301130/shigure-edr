@@ -6,6 +6,7 @@ type TelemetryOptions struct {
 	CollectProcessSnapshot  bool
 	CollectNetworkSnapshot  bool
 	CollectWindowsEventLogs bool
+	CollectETWProcessEvents bool
 }
 
 func DefaultTelemetryOptions() TelemetryOptions {
@@ -30,6 +31,9 @@ func SnapshotTelemetryWithOptions(tenantID string, maxEvents int, opts Telemetry
 	}
 	if opts.CollectWindowsEventLogs && len(events) < maxEvents {
 		events = append(events, platformEventLogSnapshot(tenantID, maxEvents-len(events))...)
+	}
+	if opts.CollectETWProcessEvents && len(events) < maxEvents {
+		events = append(events, DrainDefaultETWProcessEvents(tenantID, maxEvents-len(events))...)
 	}
 	if len(events) > maxEvents {
 		return events[:maxEvents]
