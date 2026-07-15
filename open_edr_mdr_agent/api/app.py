@@ -391,6 +391,84 @@ def create_app(
             raise HTTPException(status_code=404, detail="hunt_not_found")
         return store.list_hunt_runs(tenant_id, hunt_id=hunt_id, limit=limit)
 
+    @app.get("/api/v1/admin/investigate/process-graph")
+    def process_graph(process_entity_id: str, host: Optional[str] = None, tenant_id: str = Query("default"), limit: int = 500, _admin=Depends(_admin_auth)):
+        events = store.list_events(tenant_id, host=host, limit=limit)
+        ordered = sorted(events, key=lambda event: event.timestamp)
+        process_events = [event for event in ordered if event.process_entity_id and event.event_type.value.startswith("process_")]
+        by_entity: dict[str, NormalizedEvent] = {}
+        for event in process_events:
+            if event.event_type.value == "process_start" or event.process_entity_id not in by_entity:
+                by_entity[event.process_entity_id] = event
+        target = by_entity.get(process_entity_id)
+        if not target:
+            raise HTTPException(status_code=404, detail="process_entity_not_found")
+
+        ancestors: list[NormalizedEvent] = []
+        gaps: list[dict[str, Any]] = []
+        seen = {process_entity_id}
+        current = target
+        while current.parent_process_entity_id:
+            parent_id = current.parent_process_entity_id
+            parent = by_entity.get(parent_id)
+            if not parent or parent_id in seen:
+                break
+            ancestors.append(parent)
+            seen.add(parent_id)
+            current = parent
+        _append_process_gap(gaps, target, by_entity)
+        for ancestor in ancestors:
+            _append_process_gap(gaps, ancestor, by_entity)
+
+        children_by_parent: dict[str, list[NormalizedEvent]] = {}
+        for event in process_events:
+            if event.parent_process_entity_id:
+                children_by_parent.setdefault(event.parent_process_entity_id, []).append(event)
+        descendants: list[NormalizedEvent] = []
+        descendant_seen: set[str] = set()
+
+        def visit_descendants(entity_id: str) -> None:
+            for child in children_by_parent.get(entity_id, []):
+                if not child.process_entity_id or child.process_entity_id in descendant_seen:
+                    continue
+                descendant_seen.add(child.process_entity_id)
+                descendants.append(child)
+                _append_process_gap(gaps, child, by_entity)
+                visit_descendants(child.process_entity_id)
+
+        visit_descendants(process_entity_id)
+        graph_entities = {process_entity_id} | {event.process_entity_id for event in descendants if event.process_entity_id}
+        timeline = [
+            event
+            for event in ordered
+            if event.process_entity_id in graph_entities or event.parent_process_entity_id in graph_entities
+        ]
+        evidence = [
+            {
+                "kind": "event",
+                "event_id": event.id,
+                "event_type": event.event_type.value,
+                "process_entity_id": event.process_entity_id,
+                "raw_ref": event.raw_ref,
+                "raw_hash": event.raw_hash,
+            }
+            for event in timeline
+            if event.raw_ref
+        ]
+        return {
+            "tenant_id": tenant_id,
+            "host": host or target.host,
+            "identity_mode": "process_entity",
+            "process_entity_id": process_entity_id,
+            "process": target,
+            "ancestors": ancestors,
+            "descendants": descendants,
+            "timeline": timeline,
+            "evidence": evidence,
+            "gaps": gaps,
+            "deprecated_compat_endpoint": "/api/v1/admin/investigate/process-chain",
+        }
+
     @app.get("/api/v1/admin/investigate/process-chain")
     def process_chain(host: str, process_id: Optional[str] = None, process_entity_id: Optional[str] = None, tenant_id: str = Query("default"), limit: int = 500, _admin=Depends(_admin_auth)):
         if not process_id and not process_entity_id:
@@ -427,6 +505,7 @@ def create_app(
                 "chain": chain,
                 "children": children[:100],
                 "gaps": gaps,
+                "deprecated_by": "/api/v1/admin/investigate/process-graph",
             }
         by_pid = {e.process_id: e for e in events if e.process_id}
         chain = []
@@ -438,7 +517,7 @@ def create_app(
             event = by_pid[current]
             chain.append(event)
             current = event.parent_process_id
-        return {"tenant_id": tenant_id, "host": host, "identity_mode": "pid_compat", "process_id": process_id, "chain": chain, "children": children[:100], "gaps": []}
+        return {"tenant_id": tenant_id, "host": host, "identity_mode": "pid_compat", "process_id": process_id, "chain": chain, "children": children[:100], "gaps": [], "deprecated_by": "/api/v1/admin/investigate/process-graph"}
 
     @app.get("/api/v1/admin/investigate/behavior-context")
     def behavior_context(host: str, tenant_id: str = Query("default"), process_id: Optional[str] = None, process_entity_id: Optional[str] = None, indicator: Optional[str] = None, limit: int = 200, _admin=Depends(_admin_auth)):
@@ -655,6 +734,22 @@ Run from elevated PowerShell:
     app.dependency_overrides[_admin_auth] = _make_admin_auth(app)
     app.dependency_overrides[_agent_auth] = _make_agent_auth(app)
     return app
+
+
+def _append_process_gap(gaps: list[dict[str, Any]], event: NormalizedEvent, by_entity: dict[str, NormalizedEvent]) -> None:
+    if not event.missing_parent_reason:
+        return
+    parent_id = event.parent_process_entity_id
+    if parent_id and parent_id in by_entity:
+        return
+    gap = {
+        "process_entity_id": event.process_entity_id,
+        "parent_process_entity_id": parent_id,
+        "missing_parent_reason": event.missing_parent_reason,
+        "process_identity_confidence": event.process_identity_confidence,
+    }
+    if gap not in gaps:
+        gaps.append(gap)
 
 
 def _runtime_config(*, profile: str | None, admin_token: str | None, enrollment_token: str | None, server_trust: str | None) -> dict:
