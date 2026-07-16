@@ -71,6 +71,15 @@ Run the automated M0 backend+agent smoke test:
 scripts/m0_smoke.sh
 ```
 
+For a fast single-endpoint demo path, use the Prototype P0 runbook:
+
+```bash
+scripts/prototype_validate.sh
+```
+
+See `docs/PROTOTYPE_P0.md` for the demo script, runtime hygiene commands, and
+the explicit limits that keep this separate from the RC0 release gate.
+
 Build the Windows agent and install it as the single branded endpoint service:
 
 ```powershell
