@@ -155,6 +155,8 @@ def test_minimal_ui_contains_endpoint_task_and_download_controls(tmp_path):
     text = res.text
     assert client.app.title == "Shigure API"
     assert "Investigation queue" in text
+    assert "Saved alert searches" in text
+    assert "Evidence ribbon" in text
     assert "Recommended next steps" in text
     assert "Deploy Shigure Agent" in text
     assert "shigure-agent-package.zip" in text

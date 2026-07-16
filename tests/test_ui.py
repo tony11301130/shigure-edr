@@ -7,8 +7,11 @@ def test_minimal_ui_served(tmp_path):
     client = TestClient(create_app(tmp_path / "ui.sqlite3", create_dev_token=True))
     res = client.get("/ui")
     assert res.status_code == 200
-    assert "SHIORI" in res.text
+    assert "SHIGURE" in res.text
     assert "/api/v1/admin/summary" in res.text
+    assert "Saved alert searches" in res.text
+    assert "Alert severity filter" in res.text
+    assert "Evidence ribbon" in res.text
     assert "/api/v1/admin/hunts" in res.text
     assert "/api/v1/admin/raw-evidence/list" in res.text
     assert "/api/v1/admin/investigate/workspace/start" in res.text

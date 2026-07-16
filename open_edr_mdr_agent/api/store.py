@@ -996,7 +996,20 @@ class SQLiteStore:
             row = conn.execute("select * from tasks where tenant_id=? and task_id=?", (tenant_id, task_id)).fetchone()
         return self._task_record(dict(row)) if row else None
 
-    def list_alerts(self, tenant_id: str, limit: int = 100, severity: Optional[str] = None, host: Optional[str] = None, title: Optional[str] = None) -> List[Alert]:
+    def list_alerts(
+        self,
+        tenant_id: str,
+        limit: int = 100,
+        severity: Optional[str] = None,
+        host: Optional[str] = None,
+        title: Optional[str] = None,
+        user: Optional[str] = None,
+        source: Optional[str] = None,
+        mitre: Optional[str] = None,
+        artifact: Optional[str] = None,
+        indicator: Optional[str] = None,
+        has_evidence: Optional[bool] = None,
+    ) -> List[Alert]:
         q = "select alert_json from alerts where tenant_id=?"
         args: list[Any] = [tenant_id]
         if severity:
@@ -1008,6 +1021,25 @@ class SQLiteStore:
         if title:
             q += " and title like ?"
             args.append(f"%{title}%")
+        if user:
+            q += " and alert_json like ?"
+            args.append(f"%{user}%")
+        if source:
+            q += " and alert_json like ?"
+            args.append(f'%"{source}"%')
+        if mitre:
+            q += " and alert_json like ?"
+            args.append(f"%{mitre}%")
+        if artifact:
+            q += " and alert_json like ?"
+            args.append(f"%{artifact}%")
+        if indicator:
+            q += " and alert_json like ?"
+            args.append(f"%{indicator}%")
+        if has_evidence is True:
+            q += " and raw_ref is not null"
+        elif has_evidence is False:
+            q += " and raw_ref is null"
         q += " order by timestamp desc limit ?"
         args.append(limit)
         with self.connect() as conn:
