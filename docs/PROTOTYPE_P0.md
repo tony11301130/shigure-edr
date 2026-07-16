@@ -7,6 +7,8 @@ The goal is a single Windows endpoint talking to one Shigure server with the
 Web UI showing endpoint status, telemetry, alerts, read-only tasks, and evidence
 flow.
 
+Demo presentation material is in `docs/prototype-p0-demo/`.
+
 ## Scope
 
 Prototype P0 demonstrates:
