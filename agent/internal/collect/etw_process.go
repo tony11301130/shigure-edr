@@ -1,8 +1,11 @@
 package collect
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"strconv"
 	"sync"
 
@@ -54,6 +57,7 @@ type ETWProcessCollector struct {
 var (
 	defaultETWProcessCollectorMu sync.Mutex
 	defaultETWProcessCollector   *ETWProcessCollector
+	startETWProcessSource        = startPlatformETWProcessSource
 )
 
 func NewETWProcessCollector(tenantID string, tracker *ProcessTracker, opts ETWProcessCollectorOptions) *ETWProcessCollector {
@@ -116,6 +120,12 @@ func (c *ETWProcessCollector) Start(ctx context.Context) error {
 	c.mu.Unlock()
 
 	go c.run(runCtx)
+	if err := startETWProcessSource(runCtx, c); err != nil {
+		cancel()
+		c.setLastError(err)
+		c.Stop()
+		return err
+	}
 	return nil
 }
 
@@ -143,6 +153,40 @@ func (c *ETWProcessCollector) Enqueue(record ETWProcessRecord) bool {
 		c.mu.Unlock()
 		return false
 	}
+}
+
+func (c *ETWProcessCollector) setLastError(err error) {
+	if err == nil {
+		return
+	}
+	c.mu.Lock()
+	c.lastError = err.Error()
+	c.mu.Unlock()
+}
+
+func (c *ETWProcessCollector) ingestJSONLines(stdout io.Reader, stderr io.Reader) {
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			var record ETWProcessRecord
+			if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
+				c.setLastError(err)
+				continue
+			}
+			c.Enqueue(record)
+		}
+		if err := scanner.Err(); err != nil {
+			c.setLastError(err)
+		}
+	}()
+	go func() {
+		scanner := bufio.NewScanner(stderr)
+		for scanner.Scan() {
+			if line := scanner.Text(); line != "" {
+				c.setLastError(errors.New(line))
+			}
+		}
+	}()
 }
 
 func (c *ETWProcessCollector) Observe(record ETWProcessRecord) agentapi.NormalizedEvent {

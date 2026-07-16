@@ -9,19 +9,21 @@ agent enrolls -> heartbeat -> uploads telemetry -> backend detection generates a
 ## Start backend
 
 ```bash
-cd /opt/open-edr-mdr-agent
+cd /opt/shigure
 . .venv/bin/activate
 OPEN_EDR_MDR_DB=/tmp/open-edr-mdr-e2e.sqlite3 \
+  OPEN_EDR_MDR_PROFILE=dev \
   uvicorn open_edr_mdr_agent.api.app:app --host 127.0.0.1 --port 8765
 ```
 
 ## Build and run agent once
 
 ```bash
-cd /opt/open-edr-mdr-agent/agent
+cd /opt/shigure/agent
 go build -o /tmp/open-edr-agent ./cmd/open-edr-agent
 
 /tmp/open-edr-agent \
+  --profile dev \
   --server http://127.0.0.1:8765 \
   --state /tmp/open-edr-agent-state.json \
   --enroll-token dev-token \
@@ -47,7 +49,7 @@ req=urllib.request.Request('http://127.0.0.1:8765/api/v1/admin/tasks', data=body
 print(urllib.request.urlopen(req).read().decode())
 PY
 
-/tmp/open-edr-agent --server http://127.0.0.1:8765 --state /tmp/open-edr-agent-state.json --once
+/tmp/open-edr-agent --profile dev --server http://127.0.0.1:8765 --state /tmp/open-edr-agent-state.json --once
 ```
 
 Expected task status in SQLite:

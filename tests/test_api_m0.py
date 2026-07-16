@@ -97,3 +97,80 @@ def test_m0_enroll_ingest_detect_task_loop(tmp_path):
     assert summary.json()["counts"]["events"] == 1
     assert summary.json()["counts"]["alerts"] == 1
     assert summary.json()["task_status"]["succeeded"] == 1
+
+
+def test_agent_ingest_accepts_windows_collector_sources(tmp_path):
+    app = create_app(tmp_path / "windows-collector-sources.sqlite3", create_dev_token=True)
+    client = TestClient(app)
+
+    enroll = client.post("/api/v1/enroll", json={
+        "enrollment_token": "dev-token",
+        "host": "WINCOL01",
+        "ip_address": "10.0.0.20",
+        "os": "Windows",
+        "agent_version": "dev-test",
+    })
+    assert enroll.status_code == 200, enroll.text
+    auth = enroll.json()
+    agent_id = auth["agent_id"]
+    headers = {"Authorization": f"Bearer {auth['agent_token']}"}
+
+    events = [
+        {
+            "source": "windows_event_log",
+            "event_type": "endpoint_state",
+            "tenant_id": "attacker-supplied-tenant-should-be-overridden",
+            "host": "WINCOL01",
+            "source_event_id": "7045",
+            "severity": "info",
+            "raw": {
+                "collector": "windows_event_log",
+                "platform": "windows_evtsubscribe",
+                "query": "service_control_manager",
+                "event_id": 7045,
+                "record_id": 123,
+                "message": "A service was installed in the system.",
+            },
+        },
+        {
+            "source": "windows_etw",
+            "event_type": "process_start",
+            "tenant_id": "attacker-supplied-tenant-should-be-overridden",
+            "host": "WINCOL01",
+            "process_name": "cmd.exe",
+            "process_id": "4242",
+            "parent_process_id": "1000",
+            "severity": "info",
+            "raw": {
+                "collector": "windows_etw_process",
+                "platform": "windows_etw",
+                "kind": "process_start",
+            },
+        },
+        {
+            "source": "windows_etw",
+            "event_type": "process_stop",
+            "tenant_id": "attacker-supplied-tenant-should-be-overridden",
+            "host": "WINCOL01",
+            "process_name": "cmd.exe",
+            "process_id": "4242",
+            "process_exit_time": "2026-07-16T08:20:00Z",
+            "severity": "info",
+            "raw": {
+                "collector": "windows_etw_process",
+                "platform": "windows_etw",
+                "kind": "process_stop",
+            },
+        },
+    ]
+    ingest = client.post(f"/api/v1/agents/{agent_id}/events", headers=headers, json={"events": events})
+    assert ingest.status_code == 200, ingest.text
+    assert ingest.json() == {"accepted": 3, "alerts_generated": 1}
+
+    listed = client.get("/api/v1/admin/events?tenant_id=default&host=WINCOL01", headers={"Authorization": "Bearer dev-admin-token"}).json()
+    assert {event["source"] for event in listed} == {"windows_event_log", "windows_etw"}
+    assert {event["event_type"] for event in listed} == {"endpoint_state", "process_start", "process_stop"}
+    assert {event["tenant_id"] for event in listed} == {"default"}
+
+    alerts = client.get("/api/v1/admin/alerts?tenant_id=default", headers={"Authorization": "Bearer dev-admin-token"}).json()
+    assert [alert["title"] for alert in alerts] == ["Windows service installed"]

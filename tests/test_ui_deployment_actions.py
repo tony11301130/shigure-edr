@@ -85,6 +85,15 @@ def test_agent_package_zip_contains_binary_config_and_installer(tmp_path, monkey
         assert "--install-dir" in install_ps1
         assert "--config" in install_ps1
         assert "sc.exe start ShigureAgent" in install_ps1
+        assert "$Args =" not in install_ps1
+        assert "$AgentArgs = @(" in install_ps1
+        assert "& $Agent @AgentArgs" in install_ps1
+        assert "Get-Service -Name \"ShigureAgent\"" in install_ps1
+        assert "sc.exe delete ShigureAgent" in install_ps1
+        assert "$StatePath = Join-Path $DataDir \"shigure-agent-state.json\"" in install_ps1
+        assert "if (Test-Path $StatePath)" in install_ps1
+        assert "PSObject.Properties.Remove(\"enrollment_token\")" in install_ps1
+        assert "System.Text.UTF8Encoding($false)" in install_ps1
         assert '"--service-binary-name", "shigure-agent.exe"' in install_ps1
         readme = zf.read("README.txt").decode()
         assert "Shigure Agent deployment package" in readme
@@ -116,6 +125,13 @@ def test_agent_package_supports_explicit_shiori_legacy_naming(tmp_path, monkeypa
         assert config["identity_file"] == "C:\\ProgramData\\Shiori\\shiori-agent-state.json"
         install_ps1 = zf.read("install.ps1").decode()
         assert "sc.exe start ShioriAgent" in install_ps1
+        assert "$Args =" not in install_ps1
+        assert "$AgentArgs = @(" in install_ps1
+        assert "Get-Service -Name \"ShioriAgent\"" in install_ps1
+        assert "sc.exe delete ShioriAgent" in install_ps1
+        assert "$StatePath = Join-Path $DataDir \"shiori-agent-state.json\"" in install_ps1
+        assert "if (Test-Path $StatePath)" in install_ps1
+        assert "PSObject.Properties.Remove(\"enrollment_token\")" in install_ps1
         assert '"--service-binary-name", "shiori-agent.exe"' in install_ps1
         assert "Legacy Shiori compatibility naming" in zf.read("README.txt").decode()
 

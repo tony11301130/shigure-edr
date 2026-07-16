@@ -773,9 +773,25 @@ if (!$Profile) {{ $Profile = "dev" }}
 Write-Host "Installing Shigure Agent for $($Config.server_url)"
 New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
 $InstalledConfig = Join-Path $DataDir "{names['config_filename']}"
+$StatePath = Join-Path $DataDir "{names['state_filename']}"
 Copy-Item -Force $ConfigPath $InstalledConfig
-$Args = @("--install-service", "--config", $InstalledConfig, "--install-dir", $InstallDir, "--state", (Join-Path $DataDir "{names['state_filename']}"), "--spool", (Join-Path $DataDir "spool.jsonl"), "--service-name", "{names['service_name']}", "--service-display-name", "{names['service_display_name']}", "--service-binary-name", "{names['agent_filename']}")
-& $Agent @Args
+if (Test-Path $StatePath) {{
+  $InstalledConfigJson = Get-Content $InstalledConfig -Raw | ConvertFrom-Json
+  $InstalledConfigJson.PSObject.Properties.Remove("enrollment_token")
+  $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+  [System.IO.File]::WriteAllText($InstalledConfig, (($InstalledConfigJson | ConvertTo-Json -Depth 20) + [Environment]::NewLine), $Utf8NoBom)
+}}
+$ExistingService = Get-Service -Name "{names['service_name']}" -ErrorAction SilentlyContinue
+if ($ExistingService) {{
+  if ($ExistingService.Status -ne "Stopped") {{
+    Stop-Service -Name "{names['service_name']}" -Force
+    $ExistingService.WaitForStatus("Stopped", "00:00:30")
+  }}
+  sc.exe delete {names['service_name']} | Out-Null
+  Start-Sleep -Seconds 2
+}}
+$AgentArgs = @("--install-service", "--config", $InstalledConfig, "--install-dir", $InstallDir, "--state", $StatePath, "--spool", (Join-Path $DataDir "spool.jsonl"), "--service-name", "{names['service_name']}", "--service-display-name", "{names['service_display_name']}", "--service-binary-name", "{names['agent_filename']}")
+& $Agent @AgentArgs
 sc.exe start {names['service_name']}
 Write-Host "Installed. Service binary: $(Join-Path $InstallDir '{names['agent_filename']}')"
 Write-Host "Endpoint state: $(Join-Path $DataDir '{names['state_filename']}')"

@@ -11,7 +11,7 @@ enrollment -> heartbeat -> telemetry ingest -> detection alerts
 ## Small smoke load
 
 ```bash
-cd /opt/open-edr-mdr-agent
+cd /opt/shigure
 . .venv/bin/activate
 open-edr-mdr-agent serve --host 127.0.0.1 --port 8770 --db /tmp/open-edr-mdr-load.sqlite3
 

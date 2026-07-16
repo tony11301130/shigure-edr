@@ -15,12 +15,15 @@ class Source(str, Enum):
     VELOCIRAPTOR = "velociraptor"
     FALCO = "falco"
     TETRAGON = "tetragon"
+    WINDOWS_ETW = "windows_etw"
+    WINDOWS_EVENT_LOG = "windows_event_log"
     INTERNAL = "internal"
 
 
 class EventType(str, Enum):
     ALERT = "alert"
     PROCESS_START = "process_start"
+    PROCESS_STOP = "process_stop"
     PROCESS_END = "process_end"
     NETWORK_CONNECTION = "network_connection"
     DNS_QUERY = "dns_query"

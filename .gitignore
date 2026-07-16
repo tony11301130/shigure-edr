@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.scratch/
 *.egg-info/
 sample-data/
 *.db

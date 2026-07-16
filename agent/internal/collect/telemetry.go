@@ -24,6 +24,12 @@ func SnapshotTelemetryWithOptions(tenantID string, maxEvents int, opts Telemetry
 	}
 	var events []agentapi.NormalizedEvent
 	events = append(events, EndpointStateTelemetry(tenantID))
+	if opts.CollectETWProcessEvents && len(events) < maxEvents {
+		events = append(events, DrainDefaultETWProcessEvents(tenantID, maxEvents-len(events))...)
+	}
+	if opts.CollectWindowsEventLogSubscriptions && len(events) < maxEvents {
+		events = append(events, DrainDefaultWindowsEventLogSubscriptionEvents(tenantID, maxEvents-len(events))...)
+	}
 	if opts.CollectProcessSnapshot {
 		events = append(events, platformProcessSnapshot(tenantID, maxEvents)...)
 	}
@@ -32,12 +38,6 @@ func SnapshotTelemetryWithOptions(tenantID string, maxEvents int, opts Telemetry
 	}
 	if opts.CollectWindowsEventLogs && len(events) < maxEvents {
 		events = append(events, platformEventLogSnapshot(tenantID, maxEvents-len(events))...)
-	}
-	if opts.CollectETWProcessEvents && len(events) < maxEvents {
-		events = append(events, DrainDefaultETWProcessEvents(tenantID, maxEvents-len(events))...)
-	}
-	if opts.CollectWindowsEventLogSubscriptions && len(events) < maxEvents {
-		events = append(events, DrainDefaultWindowsEventLogSubscriptionEvents(tenantID, maxEvents-len(events))...)
 	}
 	if len(events) > maxEvents {
 		return events[:maxEvents]

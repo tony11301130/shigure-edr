@@ -105,6 +105,52 @@ func TestETWProcessCollectorStartsStopsAndDrainsEvents(t *testing.T) {
 	}
 }
 
+func TestETWProcessCollectorStartRunsPlatformSource(t *testing.T) {
+	original := startETWProcessSource
+	defer func() { startETWProcessSource = original }()
+
+	startETWProcessSource = func(ctx context.Context, collector *ETWProcessCollector) error {
+		collector.Enqueue(ETWProcessRecord{
+			Kind:        ETWProcessStart,
+			Host:        "PEI01",
+			ProcessID:   321,
+			ProcessName: "cmd.exe",
+			ImagePath:   "C:/Windows/System32/cmd.exe",
+			CreateTime:  "2026-07-16T07:57:00Z",
+			Raw:         map[string]any{"platform": "test_process_trace"},
+		})
+		return nil
+	}
+
+	tracker := NewProcessTracker("PEI01", "boot-a", ProcessTrackerOptions{})
+	collector := NewETWProcessCollector("default", tracker, ETWProcessCollectorOptions{QueueSize: 4})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := collector.Start(ctx); err != nil {
+		t.Fatalf("start collector: %v", err)
+	}
+	defer collector.Stop()
+
+	var events []agentapi.NormalizedEvent
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		events = collector.DrainEvents(10)
+		if len(events) == 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected platform source event, got %#v", events)
+	}
+	if events[0].Source != "windows_etw" || events[0].ProcessID != "321" {
+		t.Fatalf("expected normalized platform process event, got %#v", events[0])
+	}
+	if events[0].Raw["platform"] != "test_process_trace" {
+		t.Fatalf("expected platform raw marker, got %#v", events[0].Raw)
+	}
+}
+
 func TestSnapshotTelemetryDrainsEnabledETWProcessEvents(t *testing.T) {
 	resetDefaultCollectorsForTest()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -134,6 +180,35 @@ func TestSnapshotTelemetryDrainsEnabledETWProcessEvents(t *testing.T) {
 	}
 	if events[1].Source != "windows_etw" || events[1].ProcessID != "100" {
 		t.Fatalf("expected drained ETW process event, got %#v", events[1])
+	}
+}
+
+func TestSnapshotTelemetryPrioritizesQueuedETWProcessEventsOverSnapshotFallback(t *testing.T) {
+	resetDefaultCollectorsForTest()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	collector := defaultETWProcessCollectorForTenant("default")
+	if err := collector.Start(ctx); err != nil {
+		t.Fatalf("start default ETW collector: %v", err)
+	}
+	defer collector.Stop()
+
+	if !collector.Enqueue(ETWProcessRecord{Kind: ETWProcessStart, Host: "PEI01", ProcessID: 777, ImagePath: "C:/Windows/System32/cmd.exe", CreateTime: "2026-07-16T08:12:00Z"}) {
+		t.Fatalf("expected enqueue to succeed")
+	}
+
+	var events []agentapi.NormalizedEvent
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		events = SnapshotTelemetryWithOptions("default", 2, TelemetryOptions{CollectProcessSnapshot: true, CollectETWProcessEvents: true})
+		if len(events) == 2 && events[1].Source == "windows_etw" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(events) != 2 || events[1].Source != "windows_etw" || events[1].ProcessID != "777" {
+		t.Fatalf("expected endpoint state plus prioritized ETW event within tight budget, got %#v", events)
 	}
 }
 

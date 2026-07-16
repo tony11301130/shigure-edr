@@ -62,7 +62,7 @@ open-edr-mdr-agent hunt powershell
 Run the M0 backend:
 
 ```bash
-open-edr-mdr-agent serve --host 127.0.0.1 --port 8765 --db /tmp/open-edr-mdr.sqlite3
+open-edr-mdr-agent serve --host 127.0.0.1 --port 8765 --db /tmp/open-edr-mdr.sqlite3 --profile dev
 ```
 
 Run the automated M0 backend+agent smoke test:
